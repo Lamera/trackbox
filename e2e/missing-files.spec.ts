@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { pressPrimary } from "./helpers";
 
 /**
  * Missing files, as rekordbox 7.2.14 shows them [OBS Winrig chris-win11
@@ -71,7 +72,7 @@ test("Auto Relocate shows Searching... and analysis asked for meanwhile waits fo
   await expect(search.getByRole("button")).toHaveCount(0);
 
   await rowOf(page, 0).locator('[data-col="title"]').click();
-  await page.keyboard.press("Shift+Meta+A");
+  await pressPrimary(page, "Shift+A");
   const dialog = page.getByRole("dialog", { name: "Analysis Setting" });
   await dialog.getByRole("button", { name: "OK", exact: true }).click();
   await expect(status).toContainText("Analyzing 1 trackQueued");

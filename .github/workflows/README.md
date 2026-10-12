@@ -1,47 +1,38 @@
-# GitHub Actions layout
+# Trackbox GitHub Actions
 
-The entry-point workflows describe orchestration. Reusable workflows and local
-composite actions own implementation details.
+The default CI entry point is `.github/workflows/ci.yml`. It runs on PRs targeting `main`, pushes to `main`, and manual dispatch, using **GitHub-hosted runners** and **read-only repository permissions**.
 
-Pull requests use a focused validation profile selected from changed paths.
-Manual full validation and the release workflow keep every input at its default
-and therefore run the exhaustive cross-platform, browser, budget, MSRV, and
-workspace test gates before deployment.
+The initial, public validation lanes are:
 
-## Entry points
+- Frontend: lint, TypeScript, Vitest, production build and bundle budget.
+- Browser: Playwright with the mocked backend in Chromium.
+- Scripts: Node.js script tests.
+- Rust deck: rustfmt, Clippy and deterministic two-deck audio-engine tests, guarded by `RB_LITE_TEST=1`.
 
-- `ci.yml` uses `scripts/ci/validation-plan.mjs` to classify changed files,
-  applies deterministic fixes, and requests only the relevant validation lanes.
-- `release.yml` resolves and records a version, validates it, promotes `main`,
-  builds installers, publishes them, and requests Store submission.
-- `label-issue-platform.yml` labels incoming issues independently of delivery.
-- `support-sync.yml` projects verified issue work state to linked Discord
-  support threads on GitHub events, with an hourly recovery pass.
 
-## Reusable validation workflows
+**Fork setup:** Enabling GitHub Actions does not retroactively validate existing pull requests. Update the PR branch (or rerun its checks explicitly) after enabling Actions. Never merge an unvalidated PR just because GitHub reports it as mergeable.
 
-- `validation.yml` coordinates the aggregate validation gate.
-- `validate-rust.yml` runs current-toolchain tests and the MSRV check.
-- `validate-windows.yml` checks Windows-native compilation and file paths.
-- `validate-linux.yml` proves the Tauri shell opens a native Linux window.
-- `validate-macos.yml` proves the Intel build launches through Rosetta.
-- `validate-frontend.yml` independently selects lint, build, unit, browser, and
-  bundle-budget checks.
-- `validate-scripts.yml` runs the dependency-free Node script tests.
+The former RBXport PR autofix/self-hosted pipeline has been replaced. It must not be reactivated without explicitly reviewing fork safety and runner access.
 
-On pull requests, Rust test and Clippy selection is narrowed by
-`scripts/ci/affected-rust-packages.mjs` to changed workspace crates and their
-reverse dependents. Deploy validation runs workspace-wide Clippy, tests, and
-MSRV checks.
+## Release and support integration
 
-## Reusable release workflows
+The original release coordinator (`release.yml`) and upstream Discord support synchronization (`support-sync.yml`) have been replaced with harmless manual placeholders. **They do not publish anything.** The old implementations remain in upstream Git history if a migration reference is needed.
 
-- `build-installer.yml` coordinates one platform package.
-- `release-publish.yml` publishes and verifies the R2 feed, prunes old payloads,
-  and announces the release.
-- `release-store.yml` verifies and submits the MSIX to Partner Center.
+Other inherited reusable workflows (for native smoke testing and packaging) are currently **not part of the public Trackbox CI**. They still contain upstream names and self-hosted runner assumptions. Do not invoke them or wire them into a release until audited and adapted.
 
-Installer implementation is further divided under `.github/actions/` into
-builder setup, signing setup, packaging, verification, and cleanup. Keep
-platform-specific commands in those actions so the release state machine stays
-readable and every cleanup path remains explicit.
+See issue #1 for remaining cross-platform CI work, #2 for application identity and #3 for Trackbox-owned unsigned GitHub Releases.
+
+## Local baseline
+
+```sh
+corepack enable
+pnpm install
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm build
+pnpm budget
+RB_LITE_TEST=1 cargo test -p rbl-deck
+```
+
+Browser smoke tests additionally require `pnpm exec playwright install chromium` and `pnpm exec playwright test --project=chromium` after the production build. Native tests/real DJ hardware require additional evidence; browser mocks alone cannot establish working audio.
