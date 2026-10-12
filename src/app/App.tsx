@@ -2174,7 +2174,7 @@ function AppBody() {
   }, [
     readOnly, advancedPrefs.protectLibrary, importFromMenu, importFolderFromMenu, importXmlFromMenu, exportXmlFromMenu, refuse,
     openPreferences, checkForUpdates, prefs, viewPrefs.tempoSlider, openReport,
-    editHistory, runLibraryHistory,
+    editHistory, runLibraryHistory, chooseLayout,
   ]);
 
   // Native menu clicks.
