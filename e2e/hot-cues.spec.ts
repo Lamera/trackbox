@@ -10,7 +10,7 @@
  * browser row's CUE mark all redrawn from the one array.
  */
 import { expect, test, type Page } from "@playwright/test";
-import { enableTooltips } from "./helpers";
+import { enableTooltips, pressPrimary } from "./helpers";
 
 const player = (page: Page) => page.getByRole("region", { name: "Preview player" });
 // The pads and the list's rows share a name, so each is found in its own box.
@@ -137,7 +137,7 @@ test("the browser row's CUE mark follows the deck without a reload", async ({ pa
   await expect(pad(page, "A")).toHaveAttribute("aria-pressed", "true");
   await expect(cueMark(page)).toContainText("CUE");
   // `command + 1` is `Clear Hot Cue A`.
-  await page.keyboard.press("Meta+1");
+  await pressPrimary(page, "1");
   await expect(pad(page, "A")).toHaveAttribute("aria-pressed", "false");
   await expect(cueMark(page)).not.toContainText("CUE");
 });
@@ -174,7 +174,7 @@ test("with rekordbox holding the library, setting and clearing are refused and c
   await expect.poll(nearA).toBe(false);
   await page.keyboard.press("1");
   await expect.poll(nearA).toBe(true);
-  await page.keyboard.press("Meta+1");
+  await pressPrimary(page, "1");
   await page.waitForTimeout(200);
   await expect(pad(page, "A")).toHaveAttribute("aria-pressed", "true");
 });
