@@ -1,16 +1,156 @@
-# Trackbox fork safety: the original release coordinator is disabled.
-# It used upstream signing identities, R2, Microsoft Store and Discord.
-# See issue #3 for the independent Trackbox GitHub Releases pipeline.
-name: Upstream release pipeline (disabled)
+# Trackbox-owned, manual, unsigned Linux release staging.
+# This workflow never contacts RBXport infrastructure and never auto-publishes.
+name: Trackbox release (manual)
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Trackbox version, without v (e.g. 0.1.0)"
+        type: string
+        required: true
+      create_draft:
+        description: "Create a DRAFT GitHub Release with the unsigned artifacts"
+        type: boolean
+        default: false
+        required: true
 
 permissions:
   contents: read
 
+concurrency:
+  group: trackbox-release
+  cancel-in-progress: false
+
 jobs:
-  disabled:
+  preflight:
+    name: Validate Trackbox-only release
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.verify.outputs.version }}
     steps:
-      - run: echo "The upstream RBXport release workflow is disabled. No release was published."
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Check repository, branch, semver and updater isolation
+        id: verify
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          version="$(node scripts/ci/trackbox-release.mjs "$VERSION")"
+          tag="v${version}"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "::error::Tag $tag already exists; release tags are immutable."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Building unsigned Trackbox $tag from ${GITHUB_SHA}" >> "$GITHUB_STEP_SUMMARY"
+
+  linux:
+    name: Build unsigned Linux (AppImage + DEB)
+    needs: preflight
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    env:
+      VERSION: ${{ needs.preflight.outputs.version }}
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install native Tauri / ALSA prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+            librsvg2-dev libgtk-3-dev libasound2-dev libssl-dev patchelf
+      - run: pnpm install --frozen-lockfile
+      - name: Stage independent Trackbox version for packaging
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/sync-version.mjs --version "$VERSION"
+          test "$(node -p 'require("./package.json").version')" = "$VERSION"
+          test "$(node -p 'require("./src-tauri/tauri.conf.json").version')" = "$VERSION"
+      - name: Package Linux bundles without updater/signing
+        run: pnpm exec tauri build --bundles appimage,deb
+      - name: Name and checksum built artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          mapfile -t appimages < <(find src-tauri/target/release/bundle -type f -name '*.AppImage' -print)
+          mapfile -t debs < <(find src-tauri/target/release/bundle -type f -name '*.deb' -print)
+          test "${#appimages[@]}" -eq 1
+          test "${#debs[@]}" -eq 1
+          cp -- "${appimages[0]}" "release/trackbox-v${VERSION}-linux-x86_64.AppImage"
+          cp -- "${debs[0]}" "release/trackbox-v${VERSION}-linux-x86_64.deb"
+          (cd release && sha256sum trackbox-* > SHA256SUMS-linux-x86_64.txt && sha256sum -c SHA256SUMS-linux-x86_64.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: trackbox-v${{ needs.preflight.outputs.version }}-linux-x86_64-unsigned
+          path: release/*
+          if-no-files-found: error
+          retention-days: 30
+
+  draft:
+    name: Create Trackbox GitHub Release draft (opt-in)
+    if: ${{ inputs.create_draft }}
+    needs: [preflight, linux]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.preflight.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: trackbox-v${{ needs.preflight.outputs.version }}-linux-x86_64-unsigned
+          path: release
+      - name: Verify payload and refuse duplicate releases
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd release && sha256sum -c SHA256SUMS-linux-x86_64.txt)
+          if gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::Release v$VERSION already exists."
+            exit 1
+          fi
+      - name: Create draft — NEVER publish automatically
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > release-notes.md <<EOF
+          Trackbox v$VERSION — unsigned Linux preview
+
+          This is an early development build of Trackbox, based on RBXport.
+          Download the matching Linux artifact and verify SHA256SUMS-linux-x86_64.txt.
+          Not signed or officially packaged by any distribution. No automatic updater.
+          Native hardware compatibility has not yet been certified; back up your library.
+          The original upstream authorship and GPL-2.0-or-later licensing remain.
+          EOF
+          gh release create "v$VERSION" release/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --draft \
+            --title "Trackbox v$VERSION (unsigned Linux preview)" \
+            --notes-file release-notes.md
+          echo "GitHub Release created as DRAFT; manual review/publication required." >> "$GITHUB_STEP_SUMMARY"
