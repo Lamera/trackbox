@@ -44,12 +44,12 @@ function TikTokIcon({ size = 19, ...props }: SVGProps<SVGSVGElement> & { size?: 
 
 /** Where the links go. */
 export const ABOUT_LINKS = [
-  { label: "Instagram", Icon: Instagram, url: "https://instagram.com/triodeofficial" },
-  { label: "TikTok", Icon: TikTokIcon, url: "https://www.tiktok.com/@triodeofficial" },
-  { label: "Twitch", Icon: Twitch, url: "https://twitch.tv/triodeofficial" },
-  { label: "Discord", Icon: DiscordIcon, url: "https://discord.gg/vUkcYZhwuR" },
-  { label: "GitHub", Icon: Github, url: "https://github.com/chrisle" },
-  { label: "Web", Icon: Globe, url: "https://triodeofficial.com" },
+  { label: "RBXport Instagram", Icon: Instagram, url: "https://instagram.com/triodeofficial" },
+  { label: "RBXport TikTok", Icon: TikTokIcon, url: "https://www.tiktok.com/@triodeofficial" },
+  { label: "RBXport Twitch", Icon: Twitch, url: "https://twitch.tv/triodeofficial" },
+  { label: "RBXport Discord", Icon: DiscordIcon, url: "https://discord.gg/vUkcYZhwuR" },
+  { label: "Trackbox GitHub", Icon: Github, url: "https://github.com/dme86/trackbox" },
+  { label: "RBXport website", Icon: Globe, url: "https://rbxport.com" },
 ];
 
 const SUPPORT_URL = "https://www.paypal.com/donate/?hosted_button_id=H6GGU8PHP8CJE";
@@ -147,13 +147,13 @@ export function AboutPane() {
   const statusText = updateStatus.kind === "checking"
     ? t("Checking for updates…")
     : updateStatus.kind === "store"
-    ? t("This copy of rbxport is from the Microsoft Store. Get updates from the Microsoft Store.")
+    ? t("This copy of Trackbox is from the Microsoft Store. Get updates from the Microsoft Store.")
     : updateStatus.kind === "upToDate"
-    ? t("rbxport v{version} is up to date.", { version: updateStatus.version })
+    ? t("Trackbox v{version} is up to date.", { version: updateStatus.version })
     : updateStatus.kind === "available"
     ? t("Update available v{version}.", { version: updateStatus.version })
     : updateStatus.kind === "ready"
-    ? t("Update v{version} downloaded — restart rbxport to use it.", { version: updateStatus.version })
+    ? t("Update v{version} downloaded — restart Trackbox to use it.", { version: updateStatus.version })
     : null;
 
   // Done when the last event's downloaded byte count reached the total; the
@@ -166,7 +166,7 @@ export function AboutPane() {
       <section className={styles.section} aria-label="About">
         <div className={styles.aboutHeader}>
           <div>
-            <h1 className={styles.aboutName}>rbxport</h1>
+            <h1 className={styles.aboutName}>Trackbox</h1>
             <p className={styles.aboutVersion} data-testid="about-version">v{version ?? "—"}</p>
           </div>
           <Button disabled={updateStatus.kind === "checking"} onClick={checkForUpdates}>
@@ -192,7 +192,7 @@ export function AboutPane() {
               onChange={(updateFrequency) => update("advanced", { updateFrequency })}
             />
           </div>
-          <p className={layout.help}>Updates download in the background and install after you quit.</p>
+          <p className={layout.help}>Trackbox updates are not yet configured; see GitHub Releases for future builds.</p>
           {statusText ? <p className={styles.updateHint} aria-live="polite">{statusText}</p> : null}
           {downloading ? (
             <div className={styles.updateProgressRow}>
@@ -226,17 +226,17 @@ export function AboutPane() {
           {updateError ? <p className={styles.updateError} role="alert">{updateError}</p> : null}
         </div>
         <div className={styles.aboutSupport}>
-          <h2>Support rbxport</h2>
-          <p>rbxport is free to use and independently developed by TRIODE.</p>
-          <p>If it makes your DJ workflow easier, consider supporting continued development and future features.</p>
-          <Button className={styles.supportButton} onClick={() => open(SUPPORT_URL)}><Heart className={styles.supportHeart} size={16} aria-hidden="true" /> Support rbxport</Button>
+          <h2>About Trackbox</h2>
+          <p>Trackbox builds on RBXport, originally developed by Chris Le (TRIODE).</p>
+          <p>The original RBXport author can be supported independently of Trackbox.</p>
+          <Button className={styles.supportButton} onClick={() => open(SUPPORT_URL)}><Heart className={styles.supportHeart} size={16} aria-hidden="true" /> Support RBXport author</Button>
         </div>
       </section>
       <div className={styles.aboutLegal}>
         <details>
           <summary>Licence</summary>
           <p className={styles.aboutLine}>
-            rbxport is free software, licensed under the GNU General Public License version 2 or, at your
+            Trackbox is based on RBXport and is free software, licensed under the GNU General Public License version 2 or, at your
             option, any later version. It comes with no warranty. It includes the Rubber Band Library
             by Particular Programs Ltd., under the same licence.
           </p>
@@ -244,7 +244,7 @@ export function AboutPane() {
         <details>
           <summary>Disclaimer</summary>
           <p className={styles.aboutLine}>
-            rbxport is an independent project and is not affiliated with, endorsed by, or sponsored by
+            Trackbox is an independent project and is not affiliated with, endorsed by, or sponsored by
             AlphaTheta Corporation, Pioneer DJ, or any other third party. rekordbox, CDJ, XDJ and
             PRO DJ LINK are trademarks of their respective owners. Back up your library before using
             any feature that writes to it.
@@ -259,7 +259,7 @@ export function AboutPane() {
             </button>
           ))}
         </div>
-        <p className={styles.aboutMade}><span>Made by TRIODE with</span> <Heart className={styles.supportHeart} size="1em" aria-hidden="true" /> <span>in California</span></p>
+        <p className={styles.aboutMade}><span>Based on RBXport, created by TRIODE with</span> <Heart className={styles.supportHeart} size="1em" aria-hidden="true" /> <span>in California</span></p>
       </footer>
     </>
   );
