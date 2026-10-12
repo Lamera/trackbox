@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "rbxport",
+  "productName": "Trackbox",
   "version": "1.6.0",
-  "identifier": "com.rbxport.app",
+  "identifier": "com.dme86.trackbox",
   "build": {
     "beforeDevCommand": "pnpm dev:web",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "rbxport",
+        "title": "Trackbox",
         "width": 1800,
         "height": 1130,
         "minWidth": 1100,
@@ -27,7 +27,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob: rbl: asset: http://rbl.localhost http://asset.localhost; media-src 'self' blob: rbl: asset: http://rbl.localhost http://asset.localhost; font-src 'self'; connect-src 'self' ipc: http://ipc.localhost https://report.rbxport.com; frame-src https://report.rbxport.com; object-src 'none'; base-uri 'self'"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob: rbl: asset: http://rbl.localhost http://asset.localhost; media-src 'self' blob: rbl: asset: http://rbl.localhost http://asset.localhost; font-src 'self'; connect-src 'self' ipc: http://ipc.localhost; frame-src; object-src 'none'; base-uri 'self'"
     }
   },
   "bundle": {
@@ -47,8 +47,8 @@
       "icons/icon.ico"
     ],
     "category": "Music",
-    "shortDescription": "DJ library and USB export manager",
-    "longDescription": "Manage a DJ library, analyze tracks, write USB exports, and serve a library to supported players over a local network.",
+    "shortDescription": "DJ library manager and two-deck performance software",
+    "longDescription": "Manage and analyze a DJ music library, export to compatible devices, and develop a two-deck DJ performance workflow.",
     "copyright": "Chris Le",
     "macOS": {
       "entitlements": "entitlements.plist",
@@ -66,14 +66,12 @@
     "resources": {
       "windows/install-update-task.ps1": "install-update-task.ps1"
     },
-    "createUpdaterArtifacts": true
+    "createUpdaterArtifacts": false
   },
   "plugins": {
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM1NzM4N0E0RTUwMEE2RTMKUldUanBnRGxwSWR6eFgyT1A3NTV0SHRMU0JDVkpEeTY0MHhHc0x4RUpxNnNBQmdBZVpmUzJueVkK",
-      "endpoints": [
-        "https://download.rbxport.com/latest.json"
-      ],
+      "endpoints": [],
       "windows": {
         "installMode": "quiet"
       }
