@@ -20,7 +20,7 @@ pub fn install() -> sentry::ClientInitGuard {
 
     sentry::init(sentry::ClientOptions {
         dsn,
-        release: Some(format!("rbxport@{}", env!("CARGO_PKG_VERSION")).into()),
+        release: Some(format!("trackbox@{}", env!("CARGO_PKG_VERSION")).into()),
         environment: Some(
             if cfg!(debug_assertions) {
                 "development"

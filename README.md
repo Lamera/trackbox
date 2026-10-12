@@ -1,3 +1,11 @@
+# Trackbox
+
+Trackbox is a community-oriented DJ application built on [RBXport](https://github.com/chrisle/rbxport). The goal is to preserve the existing library/export experience and visual design while developing a complete two-deck performance mode.
+
+**Fork transition in progress:** internal crate names and some documentation still use `rbxport`. The original project's copyrights and GPL-2.0-or-later license remain in force. Trackbox does not use RBXport's signing, updater, Microsoft Store or Discord infrastructure. See [AGENTS.md](AGENTS.md) and [open issues](https://github.com/dme86/trackbox/issues).
+
+## Upstream technical baseline
+
 <p align="center">
   <a href="https://rbxport.com">
     <img src="docs/assets/brand/combined/rbxport-logo-color-white.png" alt="rbxport" width="360">

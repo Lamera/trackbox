@@ -13,7 +13,7 @@ export function initializeSentry() {
 
   Sentry.init({
     dsn,
-    release: `rbxport@${__APP_VERSION__}`,
+    release: `trackbox@${__APP_VERSION__}`,
     environment: import.meta.env.MODE,
     // Error/crash reporting only: no tracing, replay, user identity, request
     // data, or interaction history. Avoid the default browser session,

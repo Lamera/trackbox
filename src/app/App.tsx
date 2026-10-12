@@ -491,12 +491,13 @@ function AppBody() {
   }, []);
   // Checks on its own a while after launch when Preferences says so; the
   // menu and Preferences ask by hand.
-  const updater = useUpdater(advancedPrefs.checkUpdates, advancedPrefs.updateFrequency);
+  // The upstream update feed is not Trackbox-owned; disable automatic checks until #3.
+  const updater = useUpdater(false, advancedPrefs.updateFrequency);
   const checkForUpdates = updater.check;
   const openWhatsNew = useCallback(() => {
     const release = updater.state.phase === "ready" ? `#v${updater.state.ready.version}` : "";
     void getBackend()
-      .then((backend) => backend.openUrl(`https://rbxport.com/whats-new/${release}`))
+      .then((backend) => backend.openUrl(`https://github.com/dme86/trackbox/releases${release}`))
       .catch(() => {});
   }, [updater.state]);
   const [updateNoticeVisible, setUpdateNoticeVisible] = useState(false);
@@ -2715,7 +2716,7 @@ function AppBody() {
         {/* What the app is costing, in the corner: its own component, so a
             reading does not re-render the window around it. */}
         <AppCost className={styles.cost} />
-        <span className={styles.appName}>rbxport</span>
+        <span className={styles.appName}>Trackbox</span>
       </div>
       <ConnectedTopBar
         clock={clock}
