@@ -9,6 +9,9 @@ The initial, public validation lanes are:
 - Scripts: Node.js script tests.
 - Rust deck: rustfmt, Clippy and deterministic two-deck audio-engine tests, guarded by `RB_LITE_TEST=1`.
 
+
+**Fork setup:** Enabling GitHub Actions does not retroactively validate existing pull requests. Update the PR branch (or rerun its checks explicitly) after enabling Actions. Never merge an unvalidated PR just because GitHub reports it as mergeable.
+
 The former RBXport PR autofix/self-hosted pipeline has been replaced. It must not be reactivated without explicitly reviewing fork safety and runner access.
 
 ## Release and support integration
