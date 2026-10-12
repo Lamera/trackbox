@@ -275,12 +275,12 @@ test("About groups version and update controls", async ({ page }) => {
   await open(page);
   const dialog = await prefs(page);
   await dialog.getByRole("tab", { name: "About" }).click();
-  await expect(dialog.getByRole("heading", { name: "About" })).toHaveCount(0);
-  await expect(dialog.getByText("Made by TRIODE with")).toBeVisible();
+  await expect(dialog.getByRole("heading", { name: "About", exact: true })).toHaveCount(0);
+  await expect(dialog.getByText("Based on RBXport, created by TRIODE with")).toBeVisible();
   await expect(dialog.getByText("in California", { exact: true })).toBeVisible();
-  await expect(dialog.getByRole("heading", { name: "Support rbxport" })).toBeVisible();
-  await expect(dialog.getByText("rbxport is free to use and independently developed by TRIODE.")).toBeVisible();
-  await expect(dialog.getByRole("heading", { name: "rbxport", exact: true })).toBeVisible();
+  await expect(dialog.getByRole("heading", { name: "About Trackbox" })).toBeVisible();
+  await expect(dialog.getByText("Trackbox builds on RBXport, originally developed by Chris Le (TRIODE).")).toBeVisible();
+  await expect(dialog.getByRole("heading", { name: "Trackbox", exact: true })).toBeVisible();
   await expect(dialog.getByRole("group", { name: "Author links" })).toBeVisible();
   const updates = dialog.getByRole("region", { name: "About", exact: true });
   await expect(dialog.getByTestId("about-version")).toHaveText("v0.4.0");
