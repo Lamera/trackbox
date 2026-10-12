@@ -258,9 +258,17 @@ test("the top bar carries what rekordbox's does, in its order", async ({ page })
   await expect(bar.getByRole("meter", { name: "Master output R" })).toBeVisible();
   await expect(bar.getByRole("meter", { name: "Audio Dropout Meter" })).toBeVisible();
 
-  // Deliberate divergences: no EXPORT dropdown, no layout or record buttons,
-  // and neither the info button nor the "Professional" badge before the gear.
-  await expect(page.getByText("EXPORT", { exact: true })).toHaveCount(0);
+  // Trackbox deliberately adds an EXPORT / PERFORMANCE workspace switch.
+  // There must be no second/upstream EXPORT dropdown, record button,
+  // info button or Professional badge before the gear.
+  const workspace = bar.getByRole("group", { name: "Workspace mode" });
+  const exportMode = workspace.getByRole("button", { name: "Export mode" });
+  const performanceMode = workspace.getByRole("button", { name: "Performance mode" });
+  await expect(exportMode).toBeVisible();
+  await expect(exportMode).toHaveAttribute("aria-pressed", "true");
+  await expect(performanceMode).toBeVisible();
+  await expect(performanceMode).toHaveAttribute("aria-pressed", "false");
+  await expect(bar.getByRole("button", { name: "EXPORT", exact: true })).toHaveCount(0);
   await expect(bar.getByRole("button", { name: "Information" })).toHaveCount(0);
   await expect(bar.getByText("Professional")).toHaveCount(0);
 
