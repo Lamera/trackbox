@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { pressPrimary } from "./helpers";
 
 /** Presses that take the detail waveform from any step out to the widest. */
 const ZOOM_STEPS_COUNT = 8;
@@ -1507,7 +1508,7 @@ test("analysing a selection reports progress and can be stopped", async ({ page 
   const rows = page.getByRole("row").filter({ has: page.getByRole("gridcell") });
   await rows.nth(2).click();
   await rows.nth(9).click({ modifiers: ["Shift"] });
-  await page.keyboard.press("Shift+Meta+A");
+  await pressPrimary(page, "Shift+A");
   await page.getByRole("dialog", { name: "Analysis Setting" }).getByRole("button", { name: "OK", exact: true }).click();
 
   const status = page.getByRole("contentinfo");
@@ -1526,7 +1527,7 @@ test("a track that cannot be analysed does not stop the run", async ({ page }) =
   const rows = page.getByRole("row").filter({ has: page.getByRole("gridcell") });
   await rows.nth(0).click();
   await rows.nth(14).click({ modifiers: ["Shift"] });
-  await page.keyboard.press("Shift+Meta+A");
+  await pressPrimary(page, "Shift+A");
   await page.getByRole("dialog", { name: "Analysis Setting" }).getByRole("button", { name: "OK", exact: true }).click();
 
   const status = page.getByRole("contentinfo");
@@ -2677,7 +2678,7 @@ test("the layout switch draws one deck, two, a short one, or none", async ({ pag
   // no deck, no gutter, and no strip left over where the deck row was.
   const top = await page.evaluate(() => {
     const style = getComputedStyle(document.documentElement);
-    return parseFloat(style.getPropertyValue("--s-title-bar-h")) + parseFloat(style.getPropertyValue("--s-top-bar-h"));
+    return (/Mac/.test(navigator.platform) ? parseFloat(style.getPropertyValue("--s-title-bar-h")) : 0) + parseFloat(style.getPropertyValue("--s-top-bar-h"));
   });
   const body = await page.getByTestId("body").boundingBox();
   const status = await page.locator("footer").boundingBox();
