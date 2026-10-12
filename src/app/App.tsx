@@ -53,6 +53,7 @@ import { useUpdater } from "@/store/useUpdater";
 import { UpdateReadyNotice } from "@/views/update/UpdateReadyNotice";
 import { MasterOutputProvider, MasterOutputConnection, useMasterControls, useMasterDisplay } from "@/store/MasterOutput";
 import { asLayout, deckCount, isFullDeck, type PlayerLayout } from "@/lib/layout";
+import { asWorkspaceMode, layoutForWorkspace, readExportLayout, WORKSPACE_MODE_KEY, EXPORT_LAYOUT_KEY, type WorkspaceMode } from "@/lib/workspaceMode";
 import { FIELD_LABEL, InfoPanel } from "@/views/info/InfoPanel";
 import { SubBrowser } from "@/views/subbrowser/SubBrowser";
 import { RightRail } from "@/views/browser/RightRail";
@@ -510,8 +511,46 @@ function AppBody() {
   const stickDefaults = prefs.preferences.djSystem;
   const deleteUnlistedMusic = prefs.preferences.usbExport.deleteUnlistedMusic;
   const compatibilityFormat = prefs.preferences.usbExport.maximumCompatibility ? prefs.preferences.usbExport.conversionFormat : undefined;
-  /** How much of the window the deck takes, kept across restarts. */
-  const [layout, setLayout] = useState<PlayerLayout>(restored.layout);
+  /** EXPORT keeps its own layout when PERFORMANCE shows both decks. */
+  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>(() => {
+    try { return asWorkspaceMode(localStorage.getItem(WORKSPACE_MODE_KEY)); }
+    catch { return "export"; }
+  });
+  const exportLayout = useRef<PlayerLayout>(
+    workspaceMode === "performance"
+      ? readExportLayout((() => {
+          try { return localStorage.getItem(EXPORT_LAYOUT_KEY); }
+          catch { return null; }
+        })(), restored.layout)
+      : restored.layout,
+  );
+  const [layout, setLayout] = useState<PlayerLayout>(
+    layoutForWorkspace(workspaceMode, exportLayout.current),
+  );
+
+  const chooseWorkspaceMode = useCallback((next: WorkspaceMode) => {
+    if (next === workspaceMode) return;
+    if (next === "performance") {
+      exportLayout.current = layout;
+      try { localStorage.setItem(EXPORT_LAYOUT_KEY, layout); } catch { /* Storage can be unavailable. */ }
+      setLayout("two");
+    } else {
+      setLayout(exportLayout.current);
+    }
+    setWorkspaceMode(next);
+    try { localStorage.setItem(WORKSPACE_MODE_KEY, next); } catch { /* Session remains usable. */ }
+  }, [layout, workspaceMode]);
+
+  const chooseLayout = useCallback((next: PlayerLayout) => {
+    // Choosing an EXPORT-specific layout explicitly exits PERFORMANCE.
+    if (workspaceMode === "performance") {
+      setWorkspaceMode("export");
+      try { localStorage.setItem(WORKSPACE_MODE_KEY, "export"); } catch { /* ignored */ }
+    }
+    exportLayout.current = next;
+    setLayout(next);
+    try { localStorage.setItem(EXPORT_LAYOUT_KEY, next); } catch { /* ignored */ }
+  }, [workspaceMode]);
   /**
    * The Traffic Light: which deck's key the browser lights rows against —
    * the MASTER menu above the track list. The key itself is that deck's
@@ -2124,7 +2163,7 @@ function AppBody() {
       return;
     }
     if (outcome.action.startsWith("layout-")) {
-      setLayout(asLayout(outcome.action.slice("layout-".length)));
+      chooseLayout(asLayout(outcome.action.slice("layout-".length)));
       return;
     }
     if (outcome.action === "missing") {
@@ -2722,7 +2761,9 @@ function AppBody() {
         clock={clock}
         onOpenSettings={openViewSettings}
         layout={layout}
-        onLayoutChange={setLayout}
+        onLayoutChange={chooseLayout}
+        workspaceMode={workspaceMode}
+        onWorkspaceModeChange={chooseWorkspaceMode}
       />
       {/* Full Browser draws no deck at all, and no gutter under one. */}
       {deckCount(layout) > 0 ? (
