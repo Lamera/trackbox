@@ -97,6 +97,8 @@ fn db_to_gain(db: f32) -> f32 {
 pub struct ChannelSettings {
     /// The trim, 0 to 2 — up to +6 dB, as the gain knob on a mixer gives.
     trim: AtomicU32,
+    /// The post-EQ channel level (0..1), independent of input trim and crossfader.
+    volume: AtomicU32,
     /// The three band knobs, 0 to 1, centre at 0.5.
     bands: [AtomicU32; 3],
     /// Which of them are killed.
@@ -107,6 +109,7 @@ impl Default for ChannelSettings {
     fn default() -> Self {
         Self {
             trim: AtomicU32::new(1.0_f32.to_bits()),
+            volume: AtomicU32::new(1.0_f32.to_bits()),
             bands: [
                 AtomicU32::new(0.5_f32.to_bits()),
                 AtomicU32::new(0.5_f32.to_bits()),
@@ -145,6 +148,15 @@ impl ChannelSettings {
 
     pub fn trim(&self) -> f32 {
         f32::from_bits(self.trim.load(Ordering::Relaxed))
+    }
+
+    pub fn set_volume(&self, volume: f32) {
+        let safe = if volume.is_finite() { volume.clamp(0.0, 1.0) } else { 1.0 };
+        self.volume.store(safe.to_bits(), Ordering::Relaxed);
+    }
+
+    pub fn volume(&self) -> f32 {
+        f32::from_bits(self.volume.load(Ordering::Relaxed))
     }
 
     pub fn set_band(&self, band: Band, position: f32) {
@@ -430,7 +442,7 @@ impl Channel {
 
     /// Runs one deck's audio through its strip, in place.
     ///
-    /// `fader` is what the crossfader leaves this deck at. Every gain moves
+    /// `fader` is the combined channel-volume/crossfader gain. Every gain moves
     /// per frame rather than per buffer, so nothing here can click.
     pub fn process(&mut self, out: &mut [f32], settings: &ChannelSettings, curve: Curve, fader: f32) {
         let wanted = settings.wanted(curve);
@@ -580,6 +592,36 @@ mod tests {
             assert!(mixer.fader().0.abs() < 1e-6, "{fade:?} should silence A");
             assert_eq!(mixer.fader().1, 1.0, "{fade:?} should leave B whole");
         }
+    }
+
+    #[test]
+    fn channel_volume_is_independent_of_trim_and_smoothly_mutes_the_channel() {
+        let settings = ChannelSettings::default();
+        assert_eq!(settings.volume(), 1.0);
+        assert_eq!(settings.trim(), 1.0);
+        let mut channel = Channel::new(RATE);
+        let mut audio = tone(220.0, RATE as usize / 4);
+        channel.process(&mut audio, &settings, Curve::Eq, settings.volume());
+        assert!(settled_peak(&audio) > 0.9);
+
+        settings.set_volume(0.0);
+        assert_eq!(settings.trim(), 1.0, "volume must not change input trim");
+        let mut silence = tone(220.0, RATE as usize / 4);
+        channel.process(&mut silence, &settings, Curve::Eq, settings.volume());
+        assert!(settled_peak(&silence) < 1e-4, "channel fader did not fade to silence");
+
+        settings.set_volume(0.5);
+        let mut half = tone(220.0, RATE as usize / 4);
+        channel.process(&mut half, &settings, Curve::Eq, settings.volume());
+        let peak = settled_peak(&half);
+        assert!((peak - 0.5).abs() < 0.01, "half volume was {peak}");
+
+        settings.set_volume(f32::NAN);
+        assert_eq!(settings.volume(), 1.0);
+        settings.set_volume(9.0);
+        assert_eq!(settings.volume(), 1.0);
+        settings.set_volume(-9.0);
+        assert_eq!(settings.volume(), 0.0);
     }
 
     #[test]
