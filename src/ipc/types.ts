@@ -730,6 +730,8 @@ export interface Backend {
   setChannelKill(deck: DeckId, band: EqBand, killed: boolean): Promise<void>;
   /** The deck's gain, 0 to 2 — up to +6 dB, as a mixer's trim gives. */
   setChannelTrim(deck: DeckId, trim: number): Promise<void>;
+  /** Post-EQ channel volume, 0..1, independent of trim and crossfader. */
+  setChannelVolume(deck: DeckId, volume: number): Promise<void>;
   /** The crossfader: 0 is deck A alone, 1 is deck B alone, 0.5 is both. */
   setCrossfade(position: number): Promise<void>;
   /** EQ or ISOLATOR — the bottom of each band's travel, and nothing else. */
