@@ -1320,14 +1320,22 @@ fn two_decks_summed(h: &Harness) -> Vec<f32> {
     h.wait_for_load(2);
     h.engine.play(Deck::A);
     h.engine.play(Deck::B);
+    // The decode threads run asynchronously. Pulling the null sink much
+    // faster than a real audio device drains their rings and can falsely
+    // report no overlap/clipping on a busy CI runner. Both warmup and
+    // measurement must follow the device's sample clock.
     // Past the fade in, input smoothing, and the 250 ms limiter release.
-    h.play_until(Deck::A, u64::from(RATE));
-    // Measure the overlap, excluding the initial input-gain smoothing ramp.
-    h.engine.master().reduction_db();
+    h.play_until_paced(Deck::A, u64::from(RATE));
     let mut out = Vec::new();
+    let period = Duration::from_micros(512 * 1_000_000 / u64::from(RATE));
+    let mut next = Instant::now();
     for _ in 0..40 {
+        let now = Instant::now();
+        if now < next {
+            std::thread::sleep(next - now);
+        }
         out.extend(h.sink.pull(512));
-        std::thread::sleep(Duration::from_millis(2));
+        next += period;
     }
     out
 }
@@ -1354,7 +1362,13 @@ fn the_limiter_off_leaves_the_clamp_to_flat_top_the_sum() {
     let h = harness();
     let out = two_decks_summed(&h);
     let flat = out.iter().filter(|s| s.abs() >= 1.0).count();
-    assert!(flat > 100, "only {flat} samples hit the rail: the sum was not clipped");
+    let peak = out.iter().fold(0.0_f32, |max, sample| max.max(sample.abs()));
+    assert!(
+        flat > 100,
+        "only {flat} samples hit the rail (peak {peak}, deck A frame {}, deck B frame {}): the sum was not clipped",
+        h.position(Deck::A),
+        h.position(Deck::B),
+    );
     assert!(h.engine.master().reduction_db() < 1e-6, "off, the limiter reported work");
 }
 
