@@ -1,83 +1,67 @@
-# Releases
+# Trackbox releases
 
-[Documentation](../README.md) · [Contributing](../../CONTRIBUTING.md)
+[Documentation](../README.md) · [CI](../../.github/workflows/README.md)
 
-The release entry point is `npm run deploy` from a clean, pushed `dev` checkout.
-A normal push does not publish a release. Read the deployment script and
-workflow before operating them; they create tags, promote branches, publish
-installers, and submit a Microsoft Store update.
+Trackbox has a **separate, explicitly manual** release path. Do **not** invoke
+RBXport's historical deployment commands or reused signing/publishing actions.
+The inherited `scripts/deploy.mjs`, `release-publish.yml` and
+`release-store.yml` are deliberately inert in this fork. The former signing,
+installer and updater infrastructure is not owned by Trackbox.
 
-## Versions and release notes
+## Stage an unsigned Linux preview
 
-The version is recorded in `Cargo.toml` (`[workspace.package]`), `package.json`,
-and `src-tauri/tauri.conf.json`. `node scripts/sync-version.mjs --version X.Y.Z`
-updates these files and workspace crate versions in `Cargo.lock`.
-`release-notes.json` contains app-visible notes prefixed with `(New)`,
-`(Improved)`, or `(Fixed)`.
+1. Merge the intended source to `main`; confirm the normal Trackbox CI is green.
+2. Open **Actions → Trackbox release (manual) → Run workflow**. Select `main`.
+3. Enter a new `X.Y.Z` version (for example `0.1.0`) without `v`.
+4. Leave **Create a DRAFT GitHub Release** off for build-only verification, or
+   enable it to create a **draft** release after packaging succeeds.
+5. Download the `trackbox-vX.Y.Z-linux-x86_64-unsigned` Actions artifact,
+   or review the draft release's Linux `.AppImage` and `.deb` files.
+6. Check `SHA256SUMS-linux-x86_64.txt` against the downloaded payloads.
+   Publish a reviewed draft manually through GitHub; the workflow **never**
+   makes a public release automatically.
 
-`pnpm dev` first synchronizes the version from the newest merged `v*` tag.
-It can reset an untagged version bump, so review incidental version changes
-before committing them. Existing release tags are immutable.
+The workflow refuses a different repository, any ref other than `main`,
+invalid version input, or a reused tag. During packaging,
+`node scripts/sync-version.mjs --version X.Y.Z` stages consistent manifest
+versions in the CI checkout only. It does **not** push version changes, change
+`main`, force-push tags, or modify GitHub branch history. The draft release
+uses the workflow's exact source commit as its target.
 
-## Validation and release sequence
+Linux uses a GitHub-hosted Ubuntu 22.04 runner and produces unsigned x86_64
+AppImage and DEB packages. Build artifacts are retained in Actions for 30 days.
+There are no upstream endpoints, Cloudflare R2 credentials, Discord
+announcements, Microsoft Store submissions, Apple signing, code signing or
+Tauri updater artifacts in this workflow.
 
-Same-repository PRs to `dev` and `main` use `.github/workflows/ci.yml` to call
-the release workflow in validation-only mode. CI can commit machine-applicable
-Clippy fixes and missing English locale fallbacks before validating the updated
-PR SHA. Fork PRs do not run on the self-hosted fleet.
+## What is intentionally not finished yet
 
-The release validation gate covers Rust tests and Clippy, the Rust 1.89 minimum
-supported version, Windows compilation and desktop checks, Linux window smoke,
-and frontend lint/build/unit/budget/Playwright and Intel macOS runtime checks.
-See [Testing](testing.md) for local checks and their evidence boundaries.
+- The inherited `1.6.0` manifest version and some crate/binary filenames
+  are still RBXport-era metadata. A staged version is used only for release
+  packaging until Trackbox adopts independent source versioning (#2).
+- The Windows NSIS hooks still reference a privileged RBXport update task;
+  **do not distribute a Windows installer** until these are removed and
+  reviewed. macOS app/DMG and Windows packages are not produced by the
+  initial workflow; both require separate unsigned packaging/smoke checks (#3).
+- The app currently has **no Trackbox auto-update feed** and unsigned builds
+  should not claim platform signing/notarization. Users may encounter
+  operating-system trust prompts.
+- Original RBXport upstream authorship/copyright, the
+  GPL-2.0-or-later license and third-party license notices must be retained.
 
-The deployment script checks the clean, pushed `dev` tip and that `main` is
-its ancestor. It asks the local Codex CLI to curate notes from the release diff
-with read-only checkout access, attaches the result to the source commit as a
-git note (`refs/notes/release-notes`), then dispatches the Release workflow,
-which reads the note (a dispatch input would be dropped while `main` does not
-declare it) and falls back to commit-derived notes when there is none. To give
-the curator extra instructions for one release, run
-`npm run deploy -- --notes-instructions "…"` or set
-`RELEASE_NOTES_INSTRUCTIONS`.
+The initial workflow is an infrastructure foundation, not a validated native
+release. A successful TypeScript/browser CI run does not prove native app
+launches, sound-card outputs or USB-device safety.
 
-When it starts, the workflow records the version and notes in a
-`chore(release): cut X.Y.Z` commit on `dev` and validates that exact commit.
-Merges may keep landing on `dev` while it runs. After validation it tags the
-release commit (tags are immutable) and fast-forwards `main` to it, leaving
-later `dev` commits for the next release. Installer jobs build from that
-promoted commit. Validation failure creates no tag; the next release reverts
-the untagged cut before choosing its version.
+## Local verification
 
-Installers and update feeds are published to R2; the workflow does not create
-a GitHub Release. Payloads precede the `latest.json` update. When `CDN_BASE_URL`
-is configured, publication checks the live feeds' versions and installer URLs.
-Only after publication succeeds does it prune old versioned artifacts, keeping
-the five newest versions, and announce the notes on Discord.
+```sh
+node --test scripts/ci/trackbox-release.test.mjs
+pnpm lint
+pnpm test
+pnpm build
+RB_LITE_TEST=1 cargo test -p rbl-deck
+```
 
-## Microsoft Store
-
-The `store-submit` job runs after the release publication job succeeds. It
-downloads the same run's Windows artifact and verifies the MSIX identity,
-publisher, x64 architecture, and language list before submission.
-
-The `microsoft-store` environment supplies `MS_STORE_PRODUCT_ID` and Partner
-Center credentials. The job configures the Microsoft Store Developer CLI and
-publishes the package for certification, then queries submission status.
-Certification is asynchronous: successful submission does not establish that
-the update is available in the Store. The former manual draft workflow is
-replaced by this release job.
-
-## Operation and verification
-
-Read `node scripts/deploy.mjs --help` for supported inputs. `SKIP_TESTS=true`
-skips validation; `SKIP_VERSION_BUMP=true` reuses the current tagged version.
-These options do not establish that omitted checks passed.
-
-Report local checks, CI, public-download verification, and Store certification
-separately. A workflow dispatch is the start of a release; confirm the exact
-published version and downloads before reporting completion.
-
-Production frontend builds obfuscate app JavaScript and omit source maps.
-Development builds remain readable. Obfuscation provides no protection for
-secrets; keep credentials out of the frontend.
+Never run `npm run deploy` or invoke old RBXport R2/Store commands. Those
+commands are intentionally disabled rather than implicitly repointed.
