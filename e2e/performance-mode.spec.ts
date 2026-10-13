@@ -40,3 +40,28 @@ test("performance vertical timeline is switchable and persists over reload", asy
   await page.getByTestId("waveform-orientation-horizontal").click();
   await expect(page.getByTestId("player-detail").first()).toHaveAttribute("data-orientation", "horizontal");
 });
+
+test("performance channel faders and EQ are real keyboard-operable controls", async ({ page }) => {
+  await page.goto("/");
+  await page.getByTestId("workspace-mode-performance").click();
+  const volumeA = page.getByRole("slider", { name: "Deck A channel volume" });
+  const volumeB = page.getByRole("slider", { name: "Deck B channel volume" });
+  const highA = page.getByRole("slider", { name: "Deck A HIGH EQ" });
+  await expect(volumeA).toHaveValue("1");
+  await expect(volumeB).toHaveValue("1");
+  await expect(highA).toHaveValue("0.5");
+  await volumeA.focus();
+  await volumeA.press("ArrowLeft");
+  await expect(volumeA).toHaveValue("0.99");
+  await highA.focus();
+  await highA.press("ArrowRight");
+  await expect(highA).toHaveValue("0.51");
+  await highA.dblclick();
+  await expect(highA).toHaveValue("0.5");
+  await page.getByRole("button", { name: "ISOLATOR", exact: true }).click();
+  await expect(page.getByRole("button", { name: "ISOLATOR", exact: true })).toHaveAttribute("aria-pressed", "true");
+
+  await page.getByTestId("workspace-mode-export").click();
+  await expect(page.getByRole("slider", { name: "Deck A channel volume" })).toHaveCount(0);
+  await expect(page.getByTestId("body")).toBeVisible();
+});
