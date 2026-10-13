@@ -358,6 +358,7 @@ async function realBackend(): Promise<Backend> {
     setChannelKill: (deck, band, killed) =>
       invoke<void>("set_channel_kill", { deck, band, killed }),
     setChannelTrim: (deck, trim) => invoke<void>("set_channel_trim", { deck, trim }),
+    setChannelVolume: (deck, volume) => invoke<void>("set_channel_volume", { deck, volume }),
     setCrossfade: (position) => invoke<void>("set_crossfade", { position }),
     setEqCurve: (isolator) => invoke<void>("set_eq_curve", { isolator }),
     appDiagnostics: () => invoke<Diagnostics>("app_diagnostics"),
