@@ -114,3 +114,31 @@
 .icon[data-on] { color: var(--c-accent); }
 .icon:focus-visible { outline: 1px solid var(--c-accent); outline-offset: -1px; }
 .glyph { width: var(--s-top-gear-size); height: var(--s-top-gear-size); }
+
+
+/* Workspace extension: existing Trackbox colour/typography tokens only.
+   EXPORT retains the original layout chooser on the far left. */
+.workspaceModes {
+  display: flex;
+  flex: none;
+  overflow: hidden;
+  border: 1px solid var(--c-raised);
+  border-radius: 2px;
+}
+.workspaceMode {
+  padding: 3px 8px;
+  border: 0;
+  background: var(--c-top);
+  color: var(--c-text-dim);
+  font-family: var(--f-ui);
+  font-size: var(--f-size-xs);
+  cursor: pointer;
+}
+.workspaceMode[aria-pressed="true"] {
+  background: var(--c-raised);
+  color: var(--c-accent);
+}
+.workspaceMode:focus-visible {
+  outline: 1px solid var(--c-accent);
+  outline-offset: -1px;
+}

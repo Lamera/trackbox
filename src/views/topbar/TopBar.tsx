@@ -8,17 +8,17 @@ import type { VuDisplay } from "@/lib/vuMeter";
  * meter, a processor meter, then the clock at the far right. The headphone
  * button that stood where the knob is now was ours, not rekordbox's.
  *
- * Deliberately not rekordbox's: its EXPORT mode dropdown and the layout and
- * record buttons at the left, and the info button and "Professional" plan
- * badge before the gear, are gone by request. The gear and everything after
- * it keep their places: they hang off the right edge, so nothing slides into
- * the room the two left. Recorded in TODO.md under "Deliberate divergences"
- * so nobody restores them in the name of matching 7.2.11.
+ * Trackbox has its own explicit EXPORT / PERFORMANCE mode switch beside
+ * the existing layout menu. The original rekordbox EXPORT dropdown, record
+ * and info buttons and "Professional" badge remain deliberately absent.
+ * The gear and everything after it retain their existing order and position
+ * at the right edge.
  */
 import { GearIcon } from "@/components/icons";
 import { useAppCost } from "@/store/useDiagnostics";
 import { VolumeKnob } from "./VolumeKnob";
 import type { PlayerLayout } from "@/lib/layout";
+import type { WorkspaceMode } from "@/lib/workspaceMode";
 import { LayoutMenu } from "./LayoutMenu";
 import styles from "./TopBar.module.css";
 import { memo } from "react";
@@ -54,6 +54,8 @@ export interface TopBarProps {
   /** How much of the window the deck takes. rekordbox puts this at the left. */
   layout?: PlayerLayout;
   onLayoutChange?: (layout: PlayerLayout) => void;
+  workspaceMode?: WorkspaceMode;
+  onWorkspaceModeChange?: (mode: WorkspaceMode) => void;
 }
 
 /** 0 to 1, and never a NaN: a NaN width is a bar that does not draw. */
@@ -72,11 +74,29 @@ export function TopBar({
   audioLoad,
   layout = "one",
   onLayoutChange,
+  workspaceMode = "export",
+  onWorkspaceModeChange,
 }: TopBarProps) {
   const filled = clamp(level);
   return (
     <header className={styles.topBar}>
       <LayoutMenu layout={layout} onChange={onLayoutChange} />
+
+      <div className={styles.workspaceModes} role="group" aria-label="Workspace mode">
+        {(["export", "performance"] as const).map((mode) => (
+          <button
+            key={mode}
+            type="button"
+            className={styles.workspaceMode}
+            aria-label={mode === "export" ? "Export mode" : "Performance mode"}
+            aria-pressed={workspaceMode === mode}
+            data-testid={mode === "export" ? "workspace-mode-export" : "workspace-mode-performance"}
+            onClick={() => onWorkspaceModeChange?.(mode)}
+          >
+            {mode.toUpperCase()}
+          </button>
+        ))}
+      </div>
 
       <span className={styles.spacer} />
 
