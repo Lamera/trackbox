@@ -53,7 +53,7 @@ import { useUpdater } from "@/store/useUpdater";
 import { UpdateReadyNotice } from "@/views/update/UpdateReadyNotice";
 import { MasterOutputProvider, MasterOutputConnection, useMasterControls, useMasterDisplay } from "@/store/MasterOutput";
 import { asLayout, deckCount, isFullDeck, type PlayerLayout } from "@/lib/layout";
-import { asWorkspaceMode, layoutForWorkspace, readExportLayout, WORKSPACE_MODE_KEY, EXPORT_LAYOUT_KEY, type WorkspaceMode } from "@/lib/workspaceMode";
+import { asWaveformOrientation, asWorkspaceMode, layoutForWorkspace, readExportLayout, WORKSPACE_MODE_KEY, EXPORT_LAYOUT_KEY, PERFORMANCE_WAVEFORM_KEY, type WaveformOrientation, type WorkspaceMode } from "@/lib/workspaceMode";
 import { FIELD_LABEL, InfoPanel } from "@/views/info/InfoPanel";
 import { SubBrowser } from "@/views/subbrowser/SubBrowser";
 import { RightRail } from "@/views/browser/RightRail";
@@ -527,6 +527,15 @@ function AppBody() {
   const [layout, setLayout] = useState<PlayerLayout>(
     layoutForWorkspace(workspaceMode, exportLayout.current),
   );
+
+  const [performanceWaveform, setPerformanceWaveform] = useState<WaveformOrientation>(() => {
+    try { return asWaveformOrientation(localStorage.getItem(PERFORMANCE_WAVEFORM_KEY)); }
+    catch { return "horizontal"; }
+  });
+  const choosePerformanceWaveform = useCallback((next: WaveformOrientation) => {
+    setPerformanceWaveform(next);
+    try { localStorage.setItem(PERFORMANCE_WAVEFORM_KEY, next); } catch { /* Storage may be unavailable. */ }
+  }, []);
 
   const chooseWorkspaceMode = useCallback((next: WorkspaceMode) => {
     if (next === workspaceMode) return;
@@ -2764,12 +2773,15 @@ function AppBody() {
         onLayoutChange={chooseLayout}
         workspaceMode={workspaceMode}
         onWorkspaceModeChange={chooseWorkspaceMode}
+        waveformOrientation={performanceWaveform}
+        onWaveformOrientationChange={choosePerformanceWaveform}
       />
       {/* Full Browser draws no deck at all, and no gutter under one. */}
       {deckCount(layout) > 0 ? (
         <div
           className={styles.decks}
           data-mixer={deckCount(layout) > 1 ? "" : undefined}
+          data-orientation={workspaceMode === "performance" ? performanceWaveform : "horizontal"}
         >
           {/* One transport column for the pair, as rekordbox draws it: deck A
               down from the top, deck B up from the bottom, and the mixer strip
@@ -2814,6 +2826,7 @@ function AppBody() {
             selectedTrackId={selectedRow?.id ?? null}
             transportSlot={deckCount(layout) > 1 ? transportA : null}
             dual={deckCount(layout) > 1}
+            waveformOrientation={workspaceMode === "performance" ? performanceWaveform : "horizontal"}
             publishZoom={deckCount(layout) > 1 ? publishZoom.a : undefined}
             bars={deckCount(layout) > 1 && dual ? dualBars : waveformZoom.a}
             onBars={deckCount(layout) > 1 && dual ? setLinkedZoom : setZoomA}
@@ -2848,6 +2861,7 @@ function AppBody() {
               transportSlot={transportB}
               flipped
               dual
+              waveformOrientation={workspaceMode === "performance" ? performanceWaveform : "horizontal"}
               publishZoom={publishZoom.b}
               bars={dual ? dualBars : waveformZoom.b}
               onBars={dual ? setLinkedZoom : setZoomB}
