@@ -225,3 +225,18 @@
   inset: 0 -5px;
 }
 .splitter:hover { background: var(--c-raised); }
+
+/* PERFORMANCE only: place two decks side-by-side so rotated detail
+   timelines have enough vertical travel. EXPORT remains pixel-identical. */
+.decks[data-mixer][data-orientation="vertical"] {
+  grid-template-columns: auto var(--s-mixer-gutter-w) auto minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-areas: "rail gap mixer a b" "gutter gutter gutter gutter gutter";
+  grid-template-rows: minmax(0, 1fr) auto;
+  height: min(62vh, 600px);
+  min-height: 435px;
+}
+.decks[data-orientation="vertical"] > .zoomSlot {
+  grid-area: a;
+  justify-self: end;
+  align-self: end;
+}

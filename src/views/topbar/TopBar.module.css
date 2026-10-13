@@ -142,3 +142,6 @@
   outline: 1px solid var(--c-accent);
   outline-offset: -1px;
 }
+
+/* The orientation choice reuses the existing mode-button design verbatim.
+   No new palette, typography or control system. */

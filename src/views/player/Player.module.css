@@ -1315,3 +1315,27 @@ button.cueDelete:disabled { color: var(--c-icon-off); }
 .player[data-flipped] .tempoRamp:not(.overviewRamp) {
   bottom: calc(var(--s-beat-marker-top) + var(--s-beat-head-h) + 2px);
 }
+
+/* A single timeline plane contains the waveform, cue badges, beatgrid,
+   loop bands and playhead. Clockwise rotation changes the travel axis
+   right-to-left -> bottom-to-top without recreating player/audio state. */
+.detailContent {
+  position: absolute;
+  inset: 0;
+}
+.detail[data-orientation="vertical"] .detailContent {
+  inset: auto;
+  top: 0;
+  left: 0;
+  transform-origin: top left;
+}
+.player[data-flipped] .detail[data-orientation="vertical"] canvas {
+  transform: none;
+}
+/* Keep the text on hot cues, tempo changes and bar count readable. */
+.detail[data-orientation="vertical"] .hotCueBadge,
+.detail[data-orientation="vertical"] .cueTempo,
+.detail[data-orientation="vertical"] .tempoRamp > span,
+.detail[data-orientation="vertical"] .bars {
+  rotate: -90deg;
+}
