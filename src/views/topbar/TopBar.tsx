@@ -18,7 +18,7 @@ import { GearIcon } from "@/components/icons";
 import { useAppCost } from "@/store/useDiagnostics";
 import { VolumeKnob } from "./VolumeKnob";
 import type { PlayerLayout } from "@/lib/layout";
-import type { WorkspaceMode } from "@/lib/workspaceMode";
+import type { WorkspaceMode, WaveformOrientation } from "@/lib/workspaceMode";
 import { LayoutMenu } from "./LayoutMenu";
 import styles from "./TopBar.module.css";
 import { memo } from "react";
@@ -56,6 +56,8 @@ export interface TopBarProps {
   onLayoutChange?: (layout: PlayerLayout) => void;
   workspaceMode?: WorkspaceMode;
   onWorkspaceModeChange?: (mode: WorkspaceMode) => void;
+  waveformOrientation?: WaveformOrientation;
+  onWaveformOrientationChange?: (orientation: WaveformOrientation) => void;
 }
 
 /** 0 to 1, and never a NaN: a NaN width is a bar that does not draw. */
@@ -76,6 +78,8 @@ export function TopBar({
   onLayoutChange,
   workspaceMode = "export",
   onWorkspaceModeChange,
+  waveformOrientation = "horizontal",
+  onWaveformOrientationChange,
 }: TopBarProps) {
   const filled = clamp(level);
   return (
@@ -97,6 +101,24 @@ export function TopBar({
           </button>
         ))}
       </div>
+
+      {workspaceMode === "performance" ? (
+        <div className={styles.workspaceModes} role="group" aria-label="Waveform orientation">
+          {(["horizontal", "vertical"] as const).map((orientation) => (
+            <button
+              key={orientation}
+              type="button"
+              className={styles.workspaceMode}
+              aria-label={orientation === "horizontal" ? "Horizontal waveforms" : "Vertical waveforms"}
+              aria-pressed={waveformOrientation === orientation}
+              data-testid={`waveform-orientation-${orientation}`}
+              onClick={() => onWaveformOrientationChange?.(orientation)}
+            >
+              {orientation.toUpperCase()}
+            </button>
+          ))}
+        </div>
+      ) : null}
 
       <span className={styles.spacer} />
 
