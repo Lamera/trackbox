@@ -2810,7 +2810,7 @@ function AppBody() {
           {/* Only with two decks. The one-player layout has no mixer and no
               crossfader, which is what rekordbox does — and what keeps a deck
               nobody has touched a fader for playing at the level of its file. */}
-          {deckCount(layout) > 1 ? <MixerStrip /> : null}
+          {deckCount(layout) > 1 ? <MixerStrip performance={workspaceMode === "performance"} /> : null}
           <Player
             track={playerTrack}
             onEject={ejectA}

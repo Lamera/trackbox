@@ -49,13 +49,17 @@ function trimLabel(trim: number): string {
 
 /** One deck's half of the strip: the gain block and the three kill buttons. */
 const Channel = memo(function Channel({
-  deck, flipped,
+  deck, flipped, performance,
 }: {
   deck: DeckId;
+  performance?: boolean;
   /** Deck B's half is the mirror of deck A's, as the capture has it. */
   flipped?: boolean;
 }) {
   const [trim, setTrim] = useState(1);
+  const [volume, setVolume] = useState(1);
+  const [eq, setEq] = useState<Record<EqBand, number>>({ high: 0.5, mid: 0.5, low: 0.5 });
+  const [error, setError] = useState<string | null>(null);
   const [killed, setKilled] = useState<ReadonlySet<EqBand>>(() => new Set());
   const drag = useRef<{ y: number; from: number } | null>(null);
 
@@ -72,6 +76,20 @@ const Channel = memo(function Channel({
     },
     [deck],
   );
+
+  const adjustVolume = useCallback((next: number) => {
+    setVolume(next);
+    void getBackend().then((backend) => backend.setChannelVolume(deck, next))
+      .then(() => setError(null))
+      .catch(() => setError("Channel volume could not reach the audio engine."));
+  }, [deck]);
+
+  const adjustEq = useCallback((band: EqBand, next: number) => {
+    setEq((current) => ({ ...current, [band]: next }));
+    void getBackend().then((backend) => backend.setChannelBand(deck, band, next))
+      .then(() => setError(null))
+      .catch(() => setError("EQ could not reach the audio engine."));
+  }, [deck]);
 
   const toggle = useCallback(
     (band: EqBand) => {
@@ -182,8 +200,50 @@ const Channel = memo(function Channel({
 
   return (
     <div className={styles.channel} data-flipped={flipped || undefined}>
-      {flipped ? bands : gain}
-      {flipped ? gain : bands}
+      {performance ? (
+        <>
+          <span className={styles.channelTitle}>DECK {deck.toUpperCase()}</span>
+          {gain}
+          <div className={styles.eqControls} role="group" aria-label={`Deck ${deck.toUpperCase()} EQ`}>
+            {BANDS.map(({ id, label }) => (
+              <label key={id} className={styles.eqBand}>
+                <span>{label}</span>
+                <input
+                  type="range"
+                  aria-label={`Deck ${deck.toUpperCase()} ${label} EQ`}
+                  min={0} max={1} step={0.01}
+                  value={eq[id]}
+                  onChange={(event) => adjustEq(id, Number(event.currentTarget.value))}
+                  onDoubleClick={() => adjustEq(id, 0.5)}
+                  title="Double-click to reset to neutral"
+                />
+                <span className={styles.eqValue}>{Math.round(eq[id] * 100)}%</span>
+              </label>
+            ))}
+          </div>
+          <span className={styles.killTitle}>EQ KILL</span>
+          {bands}
+          <label className={styles.channelVolume}>
+            <span>CHANNEL</span>
+            <input
+              type="range"
+              aria-label={`Deck ${deck.toUpperCase()} channel volume`}
+              min={0} max={1} step={0.01}
+              value={volume}
+              onChange={(event) => adjustVolume(Number(event.currentTarget.value))}
+              onDoubleClick={() => adjustVolume(1)}
+              title="Channel fader (post-EQ); double-click to restore unity"
+            />
+            <span>{Math.round(volume * 100)}%</span>
+          </label>
+          {error ? <span role="alert" className={styles.channelError}>{error}</span> : null}
+        </>
+      ) : (
+        <>
+          {flipped ? bands : gain}
+          {flipped ? gain : bands}
+        </>
+      )}
     </div>
   );
 });
@@ -193,10 +253,20 @@ export interface MixerStripProps {
   onCrossfade?: (position: number) => void;
   /** Where the fader starts: 0 is deck A alone, 1 is deck B alone. */
   crossfade?: number;
+  /** Expanded two-channel mixing surface; EXPORT keeps its compact strip. */
+  performance?: boolean;
 }
 
-export function MixerStrip({ crossfade = 0.5, onCrossfade }: MixerStripProps) {
+export function MixerStrip({ crossfade = 0.5, onCrossfade, performance = false }: MixerStripProps) {
   const [at, setAt] = useState(crossfade);
+  const [isolator, setIsolator] = useState(false);
+  const [curveError, setCurveError] = useState<string | null>(null);
+  const chooseCurve = useCallback((next: boolean) => {
+    setIsolator(next);
+    void getBackend().then((backend) => backend.setEqCurve(next))
+      .then(() => setCurveError(null))
+      .catch(() => setCurveError("EQ curve could not reach the audio engine."));
+  }, []);
   const track = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -218,9 +288,19 @@ export function MixerStrip({ crossfade = 0.5, onCrossfade }: MixerStripProps) {
   }, []);
 
   return (
-    <div className={styles.strip} role="group" aria-label="Mixer">
-      <Channel deck="a" />
-      <div className={styles.fader}>
+    <div className={styles.strip} role="group" aria-label="Mixer" data-performance={performance || undefined}>
+      {performance ? (
+        <div key="performance-header" className={styles.mixerHeader}>
+          <span>MIXER</span>
+          <div role="group" aria-label="EQ curve">
+            <button type="button" aria-pressed={!isolator} onClick={() => chooseCurve(false)}>EQ</button>
+            <button type="button" aria-pressed={isolator} onClick={() => chooseCurve(true)}>ISOLATOR</button>
+          </div>
+          {curveError ? <span role="alert">{curveError}</span> : null}
+        </div>
+      ) : null}
+      <Channel key="a" deck="a" performance={performance} />
+      <div key="crossfader" className={styles.fader}>
         <span className={styles.deckLabel}>A</span>
         <div
           ref={track}
@@ -251,7 +331,7 @@ export function MixerStrip({ crossfade = 0.5, onCrossfade }: MixerStripProps) {
         </div>
         <span className={styles.deckLabel}>B</span>
       </div>
-      <Channel deck="b" flipped />
+      <Channel key="b" deck="b" flipped performance={performance} />
     </div>
   );
 }

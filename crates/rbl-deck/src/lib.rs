@@ -387,7 +387,9 @@ impl Engine {
                     let after = reader.clock.position();
                     let fader = if i == 0 { fade_a } else { fade_b };
                     let Some(settings) = strip.channels.get(i) else { continue };
-                    channel.process(buffer, settings, curve, fader);
+                    // The post-EQ channel fader shares the existing per-frame
+                    // smoothing with the crossfader. No callback allocations.
+                    channel.process(buffer, settings, curve, fader * settings.volume());
                     // The click after the strip, so an EQ cut does not muffle
                     // it, and only while the deck is playing: a scrub crosses
                     // beats too, and nobody wants it clicking.

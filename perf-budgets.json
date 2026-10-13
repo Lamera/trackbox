@@ -1,6 +1,6 @@
 {
   "$schemaVersion": 2,
-  "$comment": "Gates are consumed by the named build and test checks. Manual targets are documented separately because ordinary CI cannot measure them reproducibly.",
+  "$comment": "Gates are consumed by the named build and test checks. Manual targets are documented separately because ordinary CI cannot measure them reproducibly. The first real PERFORMANCE two-channel mixer (PR #15) measures 325.7 KB gzip total in hosted CI, so the total gate is explicitly raised by 1 KB (325 to 326); the 150 KB initial-chunk gate remains unchanged.",
   "baseline": {
     "date": "2026-10-04",
     "sourceCommit": "29dc378",
@@ -27,7 +27,7 @@
   "gates": {
     "bundle": {
       "initialChunkKbGz": 150,
-      "totalKbGz": 325
+      "totalKbGz": 326
     },
     "browser": {
       "firstRowsMs": {

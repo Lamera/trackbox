@@ -2490,6 +2490,21 @@ pub async fn set_channel_trim<R: tauri::Runtime>(
     Ok(())
 }
 
+/// Independent post-EQ channel level, 0 (silent) to 1 (unity).
+#[tauri::command]
+pub async fn set_channel_volume<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    player: State<'_, Arc<crate::player::Player>>,
+    deck: String,
+    volume: f32,
+) -> AppResult<()> {
+    let engine = player.engine(&app)?;
+    if let Some(channel) = engine.mixer().channels.get(channel_of(&deck)) {
+        channel.set_volume(volume);
+    }
+    Ok(())
+}
+
 /// The crossfader: 0 is deck A alone, 1 is deck B alone, 0.5 is both.
 #[tauri::command]
 pub async fn set_crossfade<R: tauri::Runtime>(

@@ -135,3 +135,131 @@
   margin-top: calc(var(--s-mixer-fader-handle-h) / -2);
   background: var(--c-outline);
 }
+
+/* Expanded PERFORMANCE mixer. EXPORT keeps the original measured 48pt rail;
+   these overrides use only the established theme colour and spacing tokens. */
+.strip[data-performance] {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas: "header header" "a b" "cross cross";
+  width: 236px;
+  min-height: 0;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 5px;
+  gap: 5px;
+  box-sizing: border-box;
+}
+.strip[data-performance] > :nth-child(1) { grid-area: header; }
+.strip[data-performance] > :nth-child(2) { grid-area: a; }
+.strip[data-performance] > :nth-child(3) { grid-area: cross; }
+.strip[data-performance] > :nth-child(4) { grid-area: b; }
+
+.mixerHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 5px;
+  font-weight: 700;
+  color: var(--c-text);
+}
+.mixerHeader > div {
+  display: flex;
+  gap: 2px;
+}
+.mixerHeader button {
+  background: var(--c-button);
+  color: var(--c-text-dim);
+  border: 1px solid var(--c-raised);
+  padding: 2px 5px;
+  font: inherit;
+  cursor: pointer;
+}
+.mixerHeader button[aria-pressed="true"] {
+  color: var(--c-accent);
+  border-color: var(--c-accent);
+}
+.strip[data-performance] .channel {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 2px;
+  background: var(--c-panel);
+  border: 1px solid var(--c-raised);
+}
+.strip[data-performance] .channel > * {
+  position: static;
+  left: auto;
+  translate: none;
+}
+.strip[data-performance] .channel .gain,
+.strip[data-performance] .channel .bands {
+  top: auto;
+  bottom: auto;
+}
+.channelTitle, .killTitle {
+  font-weight: 700;
+  color: var(--c-text);
+}
+.killTitle { color: var(--c-mixer-label); }
+.eqControls {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  gap: 3px;
+}
+.eqBand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  color: var(--c-text);
+  gap: 2px;
+}
+.eqBand input { width: 84px; max-width: 100%; accent-color: var(--c-accent); }
+.eqValue { color: var(--c-mixer-label); }
+.strip[data-performance] .bands {
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 3px;
+}
+.strip[data-performance] .bands .band {
+  width: auto;
+  min-width: 29px;
+  padding: 0 3px;
+}
+.channelVolume {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.channelVolume input {
+  width: 84px;
+  accent-color: var(--c-accent);
+}
+.channelError { color: var(--c-cue-head); }
+.strip[data-performance] .fader {
+  position: relative;
+  grid-area: cross;
+  left: auto;
+  top: auto;
+  translate: none;
+  flex-direction: row;
+  justify-content: center;
+  gap: 8px;
+  padding: 3px;
+}
+.strip[data-performance] .faderTrack {
+  height: 42px;
+}
+/* Keep the native range keyboard focus and thumb discoverable. */
+.eqBand input:focus-visible, .channelVolume input:focus-visible,
+.mixerHeader button:focus-visible {
+  outline: 1px solid var(--c-accent);
+  outline-offset: 1px;
+}
