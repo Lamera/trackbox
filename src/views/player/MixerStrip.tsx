@@ -290,7 +290,7 @@ export function MixerStrip({ crossfade = 0.5, onCrossfade, performance = false }
   return (
     <div className={styles.strip} role="group" aria-label="Mixer" data-performance={performance || undefined}>
       {performance ? (
-        <div className={styles.mixerHeader}>
+        <div key="performance-header" className={styles.mixerHeader}>
           <span>MIXER</span>
           <div role="group" aria-label="EQ curve">
             <button type="button" aria-pressed={!isolator} onClick={() => chooseCurve(false)}>EQ</button>
@@ -299,8 +299,8 @@ export function MixerStrip({ crossfade = 0.5, onCrossfade, performance = false }
           {curveError ? <span role="alert">{curveError}</span> : null}
         </div>
       ) : null}
-      <Channel deck="a" performance={performance} />
-      <div className={styles.fader}>
+      <Channel key="a" deck="a" performance={performance} />
+      <div key="crossfader" className={styles.fader}>
         <span className={styles.deckLabel}>A</span>
         <div
           ref={track}
@@ -331,7 +331,7 @@ export function MixerStrip({ crossfade = 0.5, onCrossfade, performance = false }
         </div>
         <span className={styles.deckLabel}>B</span>
       </div>
-      <Channel deck="b" flipped performance={performance} />
+      <Channel key="b" deck="b" flipped performance={performance} />
     </div>
   );
 }
