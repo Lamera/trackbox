@@ -86,6 +86,7 @@ import {
   beatLoopLength, detectPlatform, dispatchBinding, hotCuePad, matchBinding, memoryCueNumber,
 } from "@/lib/shortcuts";
 import { WaveformDetail } from "./WaveformDetail";
+import { waveformAxis, waveformPointerDelta, type WaveformOrientation } from "@/lib/workspaceMode";
 import { SimplePlayer } from "./SimplePlayer";
 import { JumpMenu } from "./JumpMenu";
 import { VocalStrip } from "./VocalStrip";
@@ -175,6 +176,9 @@ export interface PlayerProps {
    * a render before the slot has mounted.
    */
   dual?: boolean;
+  /** The playback engine, grids, cues and loops stay mounted; only the detail
+   * timeline's projection changes in PERFORMANCE mode. */
+  waveformOrientation?: WaveformOrientation;
   /**
    * The zoom, when the shell draws the cluster.
    *
@@ -826,7 +830,7 @@ export const Player = memo(function Player({
   track, onEject, onError, onAnalyse, onDropTrack, onLoadSelected, selectedTrackId = null,
   onExportTrack, devices = [], onExportLoop,
   dragging = false, deck = "a",
-  simple = false, transportSlot, flipped = false, dual = false, publishZoom,
+  simple = false, transportSlot, flipped = false, dual = false, waveformOrientation = "horizontal", publishZoom,
   bars: linkedBars, onBars, jumpSize: linkedJump, onJumpSize,
   publishSync, peerSync, isMaster = false, onMaster, synced = false, onSyncToggle,
   leaderBpmX100 = null, onPlayingBpm, onKeyShift, onGridNudge, publishGridFollow, readOnly = false,
@@ -842,6 +846,7 @@ export const Player = memo(function Player({
     return measureOverview(element);
   }, [measureOverview]);
   const [detailRef, detail] = useElementSize<HTMLDivElement>();
+  const { length: detailAxis, breadth: detailBreadth } = waveformAxis(detail, waveformOrientation);
   // Written to by the frame loop below rather than rendered: see the effect.
   const overviewHead = useRef<HTMLSpanElement>(null);
   const detailHead = useRef<HTMLSpanElement>(null);
@@ -1091,7 +1096,7 @@ export const Player = memo(function Player({
    * the deck only updates its canvas anchor when the buffered slice runs out.
    */
   useEffect(() => {
-    const x = (headPercent() / 100) * detail.width;
+    const x = (headPercent() / 100) * detailAxis;
     if (detailHead.current) detailHead.current.style.transform = `translateX(${x}px)`;
     if (barsLabel.current) barsLabel.current.style.transform = `translateX(${x}px)`;
     const apply = (seconds: number) => {
@@ -1105,7 +1110,7 @@ export const Player = memo(function Player({
       // from React state stepped it at the tick rate — ten times a second,
       // which is what made a scrolling waveform look like a slideshow.
       if (scroller.current) {
-        const dx = scrollOffset(at, drawn.current, span, detail.width);
+        const dx = scrollOffset(at, drawn.current, span, detailAxis);
         scroller.current.style.transform = `translateX(${dx}px)`;
       }
       if (needsRedraw(at, drawn.current, span)) setAnchor(at);
@@ -1121,7 +1126,7 @@ export const Player = memo(function Player({
     // and the head would otherwise sit where the last track left it.
     apply(positionRef.current);
     return subscribe(apply);
-  }, [total, bpm, span, overview.width, detail.width, positionRef, subscribe, beatCount, memorySeconds, grid, overviewRef, simple, dual]);
+  }, [total, bpm, span, overview.width, detailAxis, positionRef, subscribe, beatCount, memorySeconds, grid, overviewRef, simple, dual]);
 
   /*
    * The layer's new anchor, taken only once it is on screen.
@@ -1135,9 +1140,9 @@ export const Player = memo(function Player({
     drawn.current = anchor;
     if (scroller.current) {
       const at = total > 0 ? Math.min(positionRef.current / total, 1) : 0;
-      scroller.current.style.transform = `translateX(${scrollOffset(at, anchor, span, detail.width)}px)`;
+      scroller.current.style.transform = `translateX(${scrollOffset(at, anchor, span, detailAxis)}px)`;
     }
-  }, [anchor, span, total, detail.width, positionRef]);
+  }, [anchor, span, total, detailAxis, positionRef]);
 
   /**
    * The wheel zooms, over the waveform it is pointing at.
@@ -1729,7 +1734,11 @@ export const Player = memo(function Player({
     const held = grab.current;
     if (!held || !event.currentTarget.hasPointerCapture(event.pointerId)) return;
     const box = event.currentTarget.getBoundingClientRect();
-    playback.scrubTo(held.at + dragSeconds(event.clientX - held.x, box.width, span, total));
+    playback.scrubTo(held.at + dragSeconds(
+      waveformPointerDelta({ x: event.clientX, y: event.clientY }, held, waveformOrientation),
+      detailAxis > 0 ? detailAxis : (waveformOrientation === "vertical" ? box.height : box.width),
+      span, total,
+    ));
   };
 
   const endDrag = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -2340,6 +2349,7 @@ export const Player = memo(function Player({
       data-flipped={flipped || undefined}
       // The two-deck body, whose rows are DualDeck's.
       data-dual={dual || undefined}
+      data-orientation={waveformOrientation}
       data-tempo-slider={viewPrefs.tempoSlider || undefined}
       data-droppable={takesDrop || undefined}
       onDragOver={dragOver}
@@ -2465,12 +2475,21 @@ export const Player = memo(function Player({
             className={styles.detail}
             data-testid="player-detail"
             data-pcm={bars <= 0.5 || undefined}
+            data-orientation={waveformOrientation}
             onWheel={wheelZoom}
             onPointerDown={startDrag}
             onPointerMove={dragDetail}
             onPointerUp={endDrag}
             onPointerCancel={endDrag}
           >
+            <div
+              className={styles.detailContent}
+              style={waveformOrientation === "vertical" ? {
+                width: `${detail.height}px`,
+                height: `${detail.width}px`,
+                transform: `translateX(${detail.width}px) rotate(90deg)`,
+              } : undefined}
+            >
             <div ref={scroller} className={styles.scroller}>
               {track && track.analysed ? (
                 <WaveformDetail
@@ -2484,8 +2503,8 @@ export const Player = memo(function Player({
                   span={span * OVERDRAW}
                   durationMs={total * 1000}
                   firstBeatMs={grid.times[0]}
-                  width={detail.width * OVERDRAW}
-                  height={detail.height}
+                  width={detailAxis * OVERDRAW}
+                  height={detailBreadth}
                   detail
                   pcmWindow={bars <= 0.5 ? {
                     // The canvas draws the same 2× viewport as PWV7, but the
@@ -2532,6 +2551,7 @@ export const Player = memo(function Player({
               data-testid="player-detail-head"
               aria-hidden
             />
+            </div>
           </div>
         </div>
 
