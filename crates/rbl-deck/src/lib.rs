@@ -34,6 +34,8 @@ mod deck;
 pub mod decode;
 mod fade;
 mod fx;
+mod latency;
+pub use latency::ControlLatency;
 mod limiter;
 mod metronome;
 mod meter;
@@ -48,7 +50,7 @@ mod smooth;
 mod stretch;
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 
 use rtrb::Consumer;
@@ -87,6 +89,10 @@ const MIX_FRAMES: usize = 4096;
 pub enum DeckError {
     #[error("there is no audio output device")]
     NoDevice,
+    /// The output that was chosen is not connected. Never answered with
+    /// another output.
+    #[error("the chosen audio output is not connected: {0}")]
+    Disconnected(String),
     #[error("the audio device could not be used: {0}")]
     Device(String),
     #[error("unsupported or unreadable audio: {0}")]
@@ -286,6 +292,8 @@ pub struct Engine {
     metronome: Arc<MetronomeSettings>,
     metronomes: [Arc<Metronome>; 2],
     fx: Arc<FxSettings>,
+    /// Whether the sink was last asked to start rather than stop.
+    streaming: AtomicBool,
 }
 
 impl Engine {
@@ -296,9 +304,9 @@ impl Engine {
 
     /// The same, on a chosen output.
     ///
-    /// `device` is an id from `output_devices`. One that is not there any more
-    /// falls back to the default, because an unplugged interface should not be
-    /// a silent app.
+    /// `device` is an id from `output_devices`. One that is not there is
+    /// `DeckError::Disconnected` rather than the default: a set must not move
+    /// to the laptop's speakers because an interface was unplugged.
     pub fn on_device(events: &EventSink, device: Option<String>) -> Result<Self> {
         Self::with_sink(
             move |render| Ok(Arc::new(CpalSink::open_named(render, device)?) as Arc<dyn Sink>),
@@ -376,6 +384,9 @@ impl Engine {
         let mut phones_level: Option<(Smoothed, Smoothed)> = None;
         let mut rms = meter::WindowRms::new();
         let render: Render = Box::new(move |out: &mut [f32], cue: &mut [f32]| {
+            // First, so every control read below is at least as new as what
+            // was measured.
+            strip.observe_latency();
             let rate = mixing.rate();
             rms.set_rate(rate);
             let channels =
@@ -518,7 +529,18 @@ impl Engine {
         let decks: [deck::DeckHandle; 2] = handles
             .try_into()
             .map_err(|_| DeckError::Device("could not start both decks".to_owned()))?;
-        Ok(Self { decks, sink, sample_rate, master, mixer, limiter, metronome, metronomes, fx })
+        Ok(Self {
+            decks,
+            sink,
+            sample_rate,
+            master,
+            mixer,
+            limiter,
+            metronome,
+            metronomes,
+            fx,
+            streaming: AtomicBool::new(false),
+        })
     }
 
     /// BEAT FX: the effect, where it is inserted, and how much of it.
@@ -527,7 +549,21 @@ impl Engine {
     }
 
     /// Device callback deadlines, without opening or polling the device.
-    pub fn audio_health(&self) -> AudioHealth { self.sink.health() }
+    pub fn audio_health(&self) -> AudioHealth {
+        let starved = self.decks.iter().map(|deck| deck.clock().starved()).sum();
+        AudioHealth { starved, ..self.sink.health() }
+    }
+
+    /// Whether the output has gone away under the engine. Nothing plays again
+    /// until a new engine is built; this one does not move to another device.
+    pub fn device_lost(&self) -> bool {
+        self.sink.lost()
+    }
+
+    /// Mixer control stored → start of the first callback that renders it.
+    pub fn control_latency(&self) -> ControlLatency {
+        self.mixer.control_latency()
+    }
 
     /// Where the headphones went when the device was opened.
     pub fn cue_routing(&self) -> CueRouting { self.sink.cue_routing() }
@@ -878,6 +914,11 @@ impl Engine {
     /// which is exactly the sort of idle cost the budget rules out.
     fn settle_device(&self) {
         let wanted = self.any_sounding();
+        if wanted && !self.streaming.swap(true, Ordering::AcqRel) {
+            self.mixer.forget_pending();
+        } else if !wanted {
+            self.streaming.store(false, Ordering::Release);
+        }
         let result = if wanted { self.sink.start() } else { self.sink.stop() };
         if let Err(e) = result {
             tracing::error!(error = %e, "the audio device would not change state");
@@ -997,6 +1038,7 @@ impl DeckReader {
         let frames = out.len() / 2;
         let mut position = self.clock.position();
         let mut done = 0;
+        let mut starved = false;
         while done < frames {
             // Faded out and the clock has moved on: this is where a seek, a
             // cue or a beat jump actually takes effect, with nothing sounding
@@ -1018,6 +1060,10 @@ impl DeckReader {
                 // milliseconds of a held sample decaying is inaudible, and the
                 // step it replaces is not. The playhead does not move for it:
                 // no audio from the track was played.
+                starved |= !changing
+                    && self.clock.playing()
+                    && !self.clock.scrubbing()
+                    && !self.clock.end_of_stream();
                 if self.ramp.silent_now() {
                     if changing {
                         self.adopt(target);
@@ -1070,6 +1116,9 @@ impl DeckReader {
         }
 
         self.clock.set_position(position);
+        if starved {
+            self.clock.note_starved();
+        }
 
         // Ran dry with nothing more coming: the track has ended. An underrun
         // that is not the end leaves the deck playing and writes silence,

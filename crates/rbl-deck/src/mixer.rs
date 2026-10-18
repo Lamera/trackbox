@@ -14,6 +14,7 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
+use crate::latency::{ControlLatency, LatencyMeter, Stamp};
 use crate::smooth::Smoothed;
 
 /// Where the low band ends and the middle begins.
@@ -109,6 +110,10 @@ pub struct ChannelSettings {
     filter: AtomicU32,
     /// The loudest sample after the strip since the last read, for a meter.
     level: AtomicU32,
+    /// The same peak, held for the interface's meter: its own slot, so the
+    /// interface and a controller's LEDs never clear each other's reading.
+    meter: AtomicU32,
+    changed: Stamp,
 }
 
 impl Default for ChannelSettings {
@@ -125,6 +130,8 @@ impl Default for ChannelSettings {
             cue: AtomicBool::new(false),
             filter: AtomicU32::new(0.5_f32.to_bits()),
             level: AtomicU32::new(0),
+            meter: AtomicU32::new(0),
+            changed: Stamp::default(),
         }
     }
 }
@@ -153,6 +160,7 @@ impl ChannelSettings {
     pub fn set_trim(&self, trim: f32) {
         let safe = if trim.is_finite() { trim.clamp(0.0, 2.0) } else { 1.0 };
         self.trim.store(safe.to_bits(), Ordering::Relaxed);
+        self.changed.mark();
     }
 
     pub fn trim(&self) -> f32 {
@@ -162,6 +170,7 @@ impl ChannelSettings {
     pub fn set_volume(&self, volume: f32) {
         let safe = if volume.is_finite() { volume.clamp(0.0, 1.0) } else { 1.0 };
         self.volume.store(safe.to_bits(), Ordering::Relaxed);
+        self.changed.mark();
     }
 
     pub fn volume(&self) -> f32 {
@@ -173,6 +182,7 @@ impl ChannelSettings {
         if let Some(slot) = self.bands.get(band.index()) {
             slot.store(safe.to_bits(), Ordering::Relaxed);
         }
+        self.changed.mark();
     }
 
     pub fn band(&self, band: Band) -> f32 {
@@ -183,6 +193,7 @@ impl ChannelSettings {
         if let Some(slot) = self.kills.get(band.index()) {
             slot.store(killed, Ordering::Relaxed);
         }
+        self.changed.mark();
     }
 
     pub fn killed(&self, band: Band) -> bool {
@@ -192,6 +203,7 @@ impl ChannelSettings {
     /// Sends the channel to the headphones, pre-fader, as a DJM's CUE does.
     pub fn set_cue(&self, on: bool) {
         self.cue.store(on, Ordering::Relaxed);
+        self.changed.mark();
     }
 
     pub fn cue(&self) -> bool {
@@ -201,6 +213,7 @@ impl ChannelSettings {
     pub fn set_filter(&self, position: f32) {
         let safe = if position.is_finite() { position.clamp(0.0, 1.0) } else { 0.5 };
         self.filter.store(safe.to_bits(), Ordering::Relaxed);
+        self.changed.mark();
     }
 
     pub fn filter(&self) -> f32 {
@@ -209,18 +222,27 @@ impl ChannelSettings {
 
     /// Held rather than replaced, so a peak between two reads is not lost.
     pub(crate) fn report_level(&self, peak: f32) {
-        let mut current = self.level.load(Ordering::Relaxed);
-        while peak > f32::from_bits(current) {
-            match self.level.compare_exchange_weak(current, peak.to_bits(), Ordering::Relaxed, Ordering::Relaxed) {
-                Ok(_) => return,
-                Err(seen) => current = seen,
+        for slot in [&self.level, &self.meter] {
+            let mut current = slot.load(Ordering::Relaxed);
+            while peak > f32::from_bits(current) {
+                match slot.compare_exchange_weak(current, peak.to_bits(), Ordering::Relaxed, Ordering::Relaxed) {
+                    Ok(_) => break,
+                    Err(seen) => current = seen,
+                }
             }
         }
     }
 
     /// The channel's peak before its fader since the last read, and clears it.
+    /// The controller's reading; the interface has `take_meter`.
     pub fn take_level(&self) -> f32 {
         f32::from_bits(self.level.swap(0, Ordering::Relaxed))
+    }
+
+    /// The same peak for the interface's channel meter, cleared independently
+    /// of `take_level`.
+    pub fn take_meter(&self) -> f32 {
+        f32::from_bits(self.meter.swap(0, Ordering::Relaxed))
     }
 
     /// The gain each band is asking for, high to low.
@@ -290,6 +312,8 @@ pub struct MixerSettings {
     crossfader_on: AtomicBool,
     /// MASTER CUE: the master on the headphones, as if it were cued.
     master_cue: AtomicBool,
+    changed: Stamp,
+    latency: LatencyMeter,
 }
 
 impl Default for MixerSettings {
@@ -305,6 +329,8 @@ impl Default for MixerSettings {
             headphone_mix: AtomicU32::new(0.0_f32.to_bits()),
             crossfader_on: AtomicBool::new(true),
             master_cue: AtomicBool::new(false),
+            changed: Stamp::default(),
+            latency: LatencyMeter::default(),
         }
     }
 }
@@ -317,6 +343,7 @@ impl MixerSettings {
     pub fn set_crossfade(&self, position: f32) {
         let safe = if position.is_finite() { position.clamp(0.0, 1.0) } else { 0.5 };
         self.position.store(safe.to_bits(), Ordering::Relaxed);
+        self.changed.mark();
     }
 
     pub fn crossfade(&self) -> f32 {
@@ -349,6 +376,7 @@ impl MixerSettings {
 
     pub fn set_crossfader_on(&self, on: bool) {
         self.crossfader_on.store(on, Ordering::Relaxed);
+        self.changed.mark();
     }
 
     pub fn crossfader_on(&self) -> bool {
@@ -366,6 +394,27 @@ impl MixerSettings {
     pub fn set_headphone_mix(&self, position: f32) {
         let safe = if position.is_finite() { position.clamp(0.0, 1.0) } else { 0.5 };
         self.headphone_mix.store(safe.to_bits(), Ordering::Relaxed);
+        self.changed.mark();
+    }
+
+    /// Called by the callback before it reads any control.
+    pub(crate) fn observe_latency(&self) {
+        let [a, b] = &self.channels;
+        self.latency.observe(&[self.changed.take(), a.changed.take(), b.changed.take()]);
+    }
+
+    /// Drops changes made while nothing was rendering: the time a stream sat
+    /// paused is not a control's latency.
+    pub(crate) fn forget_pending(&self) {
+        let [a, b] = &self.channels;
+        for stamp in [&self.changed, &a.changed, &b.changed] {
+            stamp.take();
+        }
+    }
+
+    /// Control change stored → first callback that renders it.
+    pub fn control_latency(&self) -> ControlLatency {
+        self.latency.snapshot()
     }
 
     pub fn headphone_mix(&self) -> f32 {
@@ -732,6 +781,21 @@ mod tests {
         let mut audio = tone(hz, RATE as usize / 2);
         channel.process(&mut audio, settings, curve, 1.0);
         settled_peak(&audio)
+    }
+
+    #[test]
+    fn the_meter_and_the_controller_hold_and_clear_their_own_peaks() {
+        let settings = ChannelSettings::default();
+        settings.report_level(0.25);
+        settings.report_level(0.5);
+        settings.report_level(0.1);
+        assert_eq!(settings.take_level(), 0.5);
+        assert_eq!(settings.take_level(), 0.0);
+        assert_eq!(settings.take_meter(), 0.5, "the controller's read cleared the meter");
+        assert_eq!(settings.take_meter(), 0.0);
+        settings.report_level(0.75);
+        assert_eq!(settings.take_meter(), 0.75);
+        assert_eq!(settings.take_level(), 0.75, "the meter's read cleared the controller's");
     }
 
     #[test]

@@ -90,6 +90,10 @@ pub trait Sink: Send + Sync {
     fn cue_routing(&self) -> CueRouting { CueRouting::Off }
     /// The rate everything downstream of the resampler runs at.
     fn sample_rate(&self) -> u32;
+    /// Whether the output has stopped for good — unplugged, or reconfigured
+    /// under the stream — so nothing will be heard until the engine is
+    /// rebuilt on a device that is there.
+    fn lost(&self) -> bool { false }
     /// Starts pulling. Called when a deck starts playing.
     fn start(&self) -> Result<()>;
     /// Stops pulling, so an idle app costs nothing.
@@ -128,6 +132,8 @@ pub struct CpalSink {
     sample_rate: u32,
     routing: CueRouting,
     running: AtomicBool,
+    /// Set by the stream's error callback, which is not the audio callback.
+    lost: Arc<AtomicBool>,
 }
 
 impl CpalSink {
@@ -140,9 +146,8 @@ impl CpalSink {
     ///
     /// By id rather than by position: a device list renumbers whenever
     /// something is plugged in, and a stored index would pick a different box
-    /// after a reboot. An id that is no longer there falls back to the default
-    /// rather than refusing to play — a missing interface should not be a
-    /// silent app.
+    /// after a reboot. An id that is not there is `DeckError::Disconnected`,
+    /// never the default: see `pick`.
     pub fn open_named(render: Render, wanted: Option<String>) -> Result<Self> {
         Self::open_with(render, wanted, StreamWish::default())
     }
@@ -159,9 +164,11 @@ impl CpalSink {
 
         let health = Arc::new(HealthMeter::default());
         let callback_health = Arc::clone(&health);
+        let lost = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&lost);
         std::thread::Builder::new()
             .name("rbl-deck-device".to_owned())
-            .spawn(move || device_thread(render, wanted.as_deref(), wish, &ask_rx, &ready_tx, callback_health))
+            .spawn(move || device_thread(render, wanted.as_deref(), wish, &ask_rx, &ready_tx, callback_health, flag))
             .map_err(DeckError::Io)?;
 
         // The rate decides what the decoders resample to, so opening is not
@@ -170,12 +177,15 @@ impl CpalSink {
             .recv()
             .map_err(|_| DeckError::Device("the audio thread stopped while starting".to_owned()))??;
 
-        Ok(Self { health, ask: ask_tx, sample_rate, routing, running: AtomicBool::new(false) })
+        Ok(Self { health, ask: ask_tx, sample_rate, routing, running: AtomicBool::new(false), lost })
     }
 }
 
 impl Sink for CpalSink {
     fn health(&self) -> AudioHealth { self.health.snapshot(self.running.load(Ordering::Relaxed)) }
+    fn lost(&self) -> bool {
+        self.lost.load(Ordering::Acquire)
+    }
     fn cue_routing(&self) -> CueRouting {
         self.routing
     }
@@ -216,8 +226,9 @@ fn device_thread(
     ask: &Receiver<Ask>,
     ready: &Sender<Result<(u32, CueRouting)>>,
     health: Arc<HealthMeter>,
+    lost: Arc<AtomicBool>,
 ) {
-    let stream = match build_stream(render, wanted, wish, health) {
+    let stream = match build_stream(render, wanted, wish, health, lost) {
         Ok((stream, rate, routing)) => {
             if ready.send(Ok((rate, routing))).is_err() {
                 return;
@@ -402,37 +413,52 @@ fn configure(
     Ok((config, format, routing))
 }
 
+/// Which output to open. Nothing chosen is the host's default, which the OS
+/// moves for us when it changes. Something chosen is that device or an error:
+/// falling back would move a live set onto whatever else is there — the
+/// laptop's speakers — which is worse than a silence the DJ is told about.
+fn pick<D>(
+    wanted: Option<&str>,
+    devices: impl IntoIterator<Item = (String, D)>,
+    default: impl FnOnce() -> Option<D>,
+) -> Result<D> {
+    match wanted {
+        None => default().ok_or(DeckError::NoDevice),
+        Some(id) => devices
+            .into_iter()
+            .find_map(|(found, device)| (found == id).then_some(device))
+            .ok_or_else(|| DeckError::Disconnected(id.to_owned())),
+    }
+}
+
 fn build_stream(
     render: Render,
     wanted: Option<&str>,
     wish: StreamWish,
     health: Arc<HealthMeter>,
+    lost: Arc<AtomicBool>,
 ) -> Result<(cpal::Stream, u32, CueRouting)> {
     let host = cpal::default_host();
-    // The named one if it is there, and the default if it is not: a device
-    // that has been unplugged since it was chosen should not stop the app
-    // making a sound.
-    let device = wanted
-        .and_then(|id| {
-            host.output_devices().ok().and_then(|mut devices| {
-                devices.find(|device| device.id().is_ok_and(|found| found.to_string() == id))
-            })
-        })
-        .or_else(|| host.default_output_device())
-        .ok_or(DeckError::NoDevice)?;
-    if let (Some(wanted), Ok(opened)) = (wanted, device.id()) {
-        if wanted != opened.to_string() {
-            tracing::warn!(wanted, opened = %device, "that audio device is not here; using another");
-        }
-    }
+    let devices = host
+        .output_devices()
+        .into_iter()
+        .flatten()
+        .filter_map(|device| Some((device.id().ok()?.to_string(), device)));
+    let device = pick(wanted, devices, || host.default_output_device())?;
     let (config, format, routing) = configure(&device, wish)?;
     let rate = config.sample_rate;
     let channels = config.channels;
     tracing::debug!(device = %device, rate, channels, ?routing, buffer = ?config.buffer_size, "audio output opened");
 
-    let error = |e: cpal::Error| match e.kind() {
+    // Called by cpal off the audio callback on Core Audio, which pauses the
+    // stream itself before reporting a disconnect; on any host a store is safe.
+    let error = move |e: cpal::Error| match e.kind() {
         cpal::ErrorKind::Xrun => tracing::warn!(error = %e, "audio buffer underrun or overrun"),
         cpal::ErrorKind::DeviceChanged => tracing::info!(error = %e, "audio output changed"),
+        cpal::ErrorKind::DeviceNotAvailable | cpal::ErrorKind::StreamInvalidated => {
+            lost.store(true, Ordering::Release);
+            tracing::error!(error = %e, "the audio output went away; output stopped");
+        }
         _ => tracing::error!(error = %e, "audio device error"),
     };
     let stream = match format {
@@ -454,7 +480,7 @@ fn build<T>(
     config: cpal::StreamConfig,
     routing: CueRouting,
     mut render: Render,
-    error: fn(cpal::Error),
+    error: impl FnMut(cpal::Error) + Send + 'static,
     health: Arc<HealthMeter>,
 ) -> Result<cpal::Stream>
 where
@@ -517,6 +543,7 @@ pub struct NullSink {
     /// Frames still to be pulled after a stop, so a fade has somewhere to
     /// happen. The device does the same thing: see `LINGER`.
     linger: AtomicUsize,
+    lost: AtomicBool,
 }
 
 impl NullSink {
@@ -526,7 +553,13 @@ impl NullSink {
             sample_rate,
             running: AtomicBool::new(false),
             linger: AtomicUsize::new(0),
+            lost: AtomicBool::new(false),
         }
+    }
+
+    /// Unplugs it: from here on it is never pulled again, as a dead stream is not.
+    pub fn lose(&self) {
+        self.lost.store(true, Ordering::SeqCst);
     }
 
     /// Pulls `frames` stereo frames, as a device callback would.
@@ -546,6 +579,9 @@ impl NullSink {
     fn pull_both(&self, frames: usize, phones: bool) -> (Vec<f32>, Vec<f32>) {
         let mut out = vec![0.0_f32; frames * 2];
         let mut cue = vec![0.0_f32; if phones { frames * 2 } else { 0 }];
+        if self.lost.load(Ordering::SeqCst) {
+            return (out, cue);
+        }
         if !self.running.load(Ordering::SeqCst) {
             let left = self.linger.load(Ordering::SeqCst);
             if left == 0 {
@@ -567,6 +603,10 @@ impl NullSink {
 impl Sink for NullSink {
     fn sample_rate(&self) -> u32 {
         self.sample_rate
+    }
+
+    fn lost(&self) -> bool {
+        self.lost.load(Ordering::SeqCst)
     }
 
     fn start(&self) -> Result<()> {
@@ -608,6 +648,36 @@ mod tests {
         sink.start().expect("start");
         assert_eq!(sink.pull(4), vec![0.5; 8]);
         assert_eq!(sink.pull_with_cue(4), (vec![0.5; 8], vec![0.25; 8]));
+    }
+
+    #[test]
+    fn a_lost_null_sink_is_never_pulled_again() {
+        let sink = NullSink::new(44_100, Box::new(|out, _cue| out.fill(0.5)));
+        sink.start().expect("start");
+        assert!(!sink.lost());
+        sink.lose();
+        assert!(sink.lost());
+        assert_eq!(sink.pull(4), vec![0.0; 8]);
+    }
+
+    #[test]
+    fn nothing_chosen_is_the_default_and_its_absence_is_no_device() {
+        let none = std::iter::empty::<(String, &str)>();
+        assert_eq!(pick(None, none.clone(), || Some("speakers")).unwrap(), "speakers");
+        assert!(matches!(pick(None, none, || None::<&str>), Err(DeckError::NoDevice)));
+    }
+
+    #[test]
+    fn a_chosen_device_is_opened_when_it_is_there() {
+        let devices = [("builtin".to_owned(), "speakers"), ("flx4".to_owned(), "DDJ-FLX4")];
+        assert_eq!(pick(Some("flx4"), devices, || Some("speakers")).unwrap(), "DDJ-FLX4");
+    }
+
+    #[test]
+    fn a_chosen_device_that_is_gone_never_falls_back_to_the_default() {
+        let devices = [("builtin".to_owned(), "speakers")];
+        let picked = pick(Some("flx4"), devices, || Some("speakers"));
+        assert!(matches!(picked, Err(DeckError::Disconnected(ref id)) if id == "flx4"), "{picked:?}");
     }
 
     #[test]

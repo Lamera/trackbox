@@ -1619,6 +1619,32 @@ fn cue_listens_before_the_fader_and_the_master_does_not_hear_it() {
 }
 
 #[test]
+fn the_channel_meter_reads_before_the_fader_and_does_not_steal_the_controllers_peak() {
+    let (_dir, h) = cued_with_fader_down();
+    let a = &h.engine.mixer().channels[0];
+    let b = &h.engine.mixer().channels[1];
+    let _ = h.pull_with_cue(24);
+    // Past the start-up, so only the settled track is read.
+    let _ = (a.take_level(), a.take_meter(), b.take_meter());
+    let _ = h.pull_with_cue(8);
+    // The track as the file has it, with the fader all the way down.
+    let expected = FLAT;
+    let level = a.take_level();
+    let meter = a.take_meter();
+    assert!((meter - expected).abs() < 0.02, "the meter read {meter}, not {expected}");
+    assert!((level - meter).abs() < 1e-6, "the controller read {level}, the meter {meter}");
+    let empty = b.take_meter();
+    assert!(empty < INAUDIBLE, "an empty deck metered {empty}");
+    // Clearing one leaves the other alone.
+    let _ = h.pull_with_cue(4);
+    let _ = a.take_level();
+    assert!(a.take_meter() > 0.3, "reading the controller's peak cleared the meter");
+    let _ = h.pull_with_cue(4);
+    let _ = a.take_meter();
+    assert!(a.take_level() > 0.3, "reading the meter cleared the controller's peak");
+}
+
+#[test]
 fn nothing_cued_and_the_mix_at_cue_is_silence_on_the_headphones() {
     let (_dir, h) = cued_with_fader_down();
     let (_, cue) = h.pull_with_cue(24);
@@ -1723,4 +1749,76 @@ fn the_master_is_the_same_to_the_sample_whatever_is_cued() {
         assert_eq!(cue.len(), master.len());
         std::thread::sleep(Duration::from_millis(2));
     }
+}
+
+#[test]
+fn a_lost_output_is_reported_and_both_decks_can_be_stopped_on_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("flat.wav");
+    flat(&path, RATE as usize * 2);
+    let h = harness();
+    h.engine.load(Deck::A, &path);
+    h.engine.load(Deck::B, &path);
+    h.wait_for_load(2);
+    h.engine.play(Deck::A);
+    h.engine.play(Deck::B);
+    h.play_until(Deck::A, 2048);
+    assert!(!h.engine.device_lost());
+
+    h.sink.lose();
+    assert!(h.engine.device_lost());
+    let at = h.position(Deck::A);
+    assert!(h.sink.pull(512).iter().all(|s| *s == 0.0), "a lost output renders nothing");
+    assert_eq!(h.position(Deck::A), at, "nothing played, so the playhead holds");
+
+    // What the app does on a loss: both decks stop where they are.
+    for deck in Deck::ALL {
+        h.engine.pause(deck);
+    }
+    assert!(!h.engine.snapshot().any_playing());
+    assert!(!h.sink.running(), "and the output is not asked to run");
+    assert!(h.engine.device_lost(), "a stopped engine is still on a lost output");
+}
+
+#[test]
+fn a_mixer_move_is_timed_to_the_first_callback_that_renders_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("flat.wav");
+    flat(&path, RATE as usize * 2);
+    let h = harness();
+    h.engine.load(Deck::A, &path);
+    h.wait_for_load(1);
+
+    // Moved while nothing renders: the paused time is not a latency.
+    h.engine.mixer().set_crossfade(0.2);
+    h.engine.play(Deck::A);
+    h.sink.pull(512);
+    assert_eq!(h.engine.control_latency().count, 0);
+
+    h.engine.mixer().channels[0].set_volume(0.5);
+    std::thread::sleep(Duration::from_millis(3));
+    h.engine.mixer().set_crossfade(0.4);
+    h.sink.pull(512);
+    let seen = h.engine.control_latency();
+    assert_eq!(seen.count, 1, "two moves before one callback are one measurement");
+    assert!(seen.last >= Duration::from_millis(3), "measured from the older move: {seen:?}");
+    assert!(seen.last < Duration::from_secs(1), "{seen:?}");
+
+    h.sink.pull(512);
+    assert_eq!(h.engine.control_latency().count, 1, "a callback with no move measures nothing");
+}
+
+#[test]
+fn a_deck_that_never_runs_dry_is_never_counted_as_starved() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("flat.wav");
+    flat(&path, RATE as usize * 2);
+    let h = harness();
+    h.engine.load(Deck::A, &path);
+    h.wait_for_load(1);
+    // A full ring before the first pull, then pulled no faster than a device.
+    std::thread::sleep(Duration::from_millis(100));
+    h.engine.play(Deck::A);
+    h.play_until_paced(Deck::A, u64::from(RATE) / 2);
+    assert_eq!(h.engine.audio_health().starved, 0);
 }
