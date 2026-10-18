@@ -2269,7 +2269,57 @@ pub async fn set_audio_config<R: tauri::Runtime>(
     sample_rate: Option<u32>,
     buffer_frames: Option<u32>,
 ) -> AppResult<()> {
-    if player.set_wish(rbl_deck::StreamWish { sample_rate, buffer_frames }) {
+    if player.set_wish(rbl_deck::StreamWish { sample_rate, buffer_frames, cue: player.wish().cue }) {
+        let _ = tauri::Emitter::emit(&app, "deck:reset", ());
+    }
+    Ok(())
+}
+
+/// Where the headphones are heard, as the interface names it.
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+#[serde(tag = "mode", rename_all = "lowercase")]
+pub enum CueRoutingWire {
+    /// Separate outputs on a known controller (a DDJ-FLX4), none elsewhere.
+    Auto,
+    Off,
+    Split,
+    /// Output channels counted from zero: a DDJ-FLX4 is master `[0, 1]` and
+    /// cue `[2, 3]`.
+    Lanes { master: (u16, u16), cue: (u16, u16) },
+}
+
+/// The most outputs a lane may name; no interface a DJ plugs in has more.
+const MAX_LANE: u16 = 63;
+
+fn cue_routing_of(wire: CueRoutingWire) -> AppResult<rbl_deck::CueRouting> {
+    Ok(match wire {
+        CueRoutingWire::Auto | CueRoutingWire::Off => rbl_deck::CueRouting::Off,
+        CueRoutingWire::Split => rbl_deck::CueRouting::Split,
+        CueRoutingWire::Lanes { master, cue } => {
+            let lanes = [master.0, master.1, cue.0, cue.1];
+            let distinct = lanes.iter().enumerate().all(|(i, a)| lanes.iter().skip(i + 1).all(|b| a != b));
+            if !distinct || lanes.iter().any(|lane| *lane > MAX_LANE) {
+                return Err(AppError::new(
+                    ErrorKind::Malformed,
+                    "The master and the headphones need four different outputs.",
+                ));
+            }
+            rbl_deck::CueRouting::Lanes { master, cue }
+        }
+    })
+}
+
+/// Preferences › Audio › Headphones. Takes effect the next time a deck
+/// plays, like the sample rate: a stream has the outputs it was opened with.
+#[tauri::command]
+pub async fn set_cue_routing<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    player: State<'_, Arc<crate::player::Player>>,
+    routing: CueRoutingWire,
+) -> AppResult<()> {
+    let wish = rbl_deck::StreamWish { cue: cue_routing_of(routing)?, ..player.wish() };
+    let auto = player.set_cue_auto(matches!(routing, CueRoutingWire::Auto));
+    if player.set_wish(wish) || auto {
         let _ = tauri::Emitter::emit(&app, "deck:reset", ());
     }
     Ok(())
@@ -2515,6 +2565,113 @@ pub async fn set_crossfade<R: tauri::Runtime>(
     let engine = player.engine(&app)?;
     engine.mixer().set_crossfade(position);
     Ok(())
+}
+
+/// A channel's CUE button: the deck pre-fader on the headphones.
+#[tauri::command]
+pub async fn set_channel_cue<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    player: State<'_, Arc<crate::player::Player>>,
+    deck: String,
+    on: bool,
+) -> AppResult<()> {
+    let engine = player.engine(&app)?;
+    if let Some(channel) = engine.mixer().channels.get(channel_of(&deck)) {
+        channel.set_cue(on);
+    }
+    Ok(())
+}
+
+/// HEADPHONES MIX: 0 is the cue alone, 1 is the master alone.
+#[tauri::command]
+pub async fn set_headphone_mix<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    player: State<'_, Arc<crate::player::Player>>,
+    position: f32,
+) -> AppResult<()> {
+    let engine = player.engine(&app)?;
+    engine.mixer().set_headphone_mix(position);
+    Ok(())
+}
+
+/// CFX: 0.5 is off, below is a low pass and above a high pass.
+#[tauri::command]
+pub async fn set_channel_filter<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    player: State<'_, Arc<crate::player::Player>>,
+    deck: String,
+    position: f32,
+) -> AppResult<()> {
+    let engine = player.engine(&app)?;
+    if let Some(channel) = engine.mixer().channels.get(channel_of(&deck)) {
+        channel.set_filter(position);
+    }
+    Ok(())
+}
+
+/// The crossfader on, or off (THRU): both decks at their channel faders.
+#[tauri::command]
+pub async fn set_crossfader_on<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    player: State<'_, Arc<crate::player::Player>>,
+    on: bool,
+) -> AppResult<()> {
+    let engine = player.engine(&app)?;
+    engine.mixer().set_crossfader_on(on);
+    Ok(())
+}
+
+/// BEAT FX as the interface sets it.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BeatFxDto {
+    pub on: bool,
+    /// `echo` or `reverb`.
+    pub kind: String,
+    /// `a`, `b` or `master`.
+    pub target: String,
+    pub depth: f32,
+    pub beat_ms: f32,
+}
+
+#[tauri::command]
+pub async fn set_beat_fx<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    player: State<'_, Arc<crate::player::Player>>,
+    fx: BeatFxDto,
+) -> AppResult<()> {
+    let engine = player.engine(&app)?;
+    let settings = engine.fx();
+    settings.set_kind(if fx.kind == "reverb" { rbl_deck::FxKind::Reverb } else { rbl_deck::FxKind::Echo });
+    settings.set_target(match fx.target.as_str() {
+        "a" => rbl_deck::FxTarget::A,
+        "b" => rbl_deck::FxTarget::B,
+        _ => rbl_deck::FxTarget::Master,
+    });
+    settings.set_depth(fx.depth);
+    settings.set_beat_ms(fx.beat_ms);
+    settings.set_on(fx.on);
+    Ok(())
+}
+
+/// The deck state only the interface knows, for the controller's LEDs.
+#[tauri::command]
+pub async fn controller_leds(
+    controller: State<'_, Arc<crate::controller::Controller>>,
+    deck: String,
+    leds: crate::controller::LedPatch,
+) -> AppResult<()> {
+    let deck = if channel_of(&deck) == 1 { rbl_control::Deck::B } else { rbl_control::Deck::A };
+    controller.patch_leds(deck, leds);
+    Ok(())
+}
+
+/// Which controller is connected, if any; changes arrive as `controller:status`.
+#[tauri::command]
+pub async fn controller_status(
+    controller: State<'_, Arc<crate::controller::Controller>>,
+) -> AppResult<crate::controller::ControllerStatus> {
+    Ok(controller.status())
 }
 
 /// EQ or ISOLATOR, which is what the bottom of each band's travel means.
@@ -4183,7 +4340,29 @@ pub async fn filter_values(
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use super::{expand_import_paths, read_analysis};
+    use super::{cue_routing_of, expand_import_paths, read_analysis, CueRoutingWire};
+
+    #[test]
+    fn cue_routing_arrives_as_the_interface_names_it() {
+        let wire: CueRoutingWire =
+            serde_json::from_str(r#"{"mode":"lanes","master":[0,1],"cue":[2,3]}"#).unwrap();
+        assert_eq!(
+            cue_routing_of(wire).unwrap(),
+            rbl_deck::CueRouting::Lanes { master: (0, 1), cue: (2, 3) }
+        );
+        let wire: CueRoutingWire = serde_json::from_str(r#"{"mode":"split"}"#).unwrap();
+        assert_eq!(cue_routing_of(wire).unwrap(), rbl_deck::CueRouting::Split);
+    }
+
+    #[test]
+    fn headphones_on_the_masters_outputs_are_refused() {
+        let wire: CueRoutingWire =
+            serde_json::from_str(r#"{"mode":"lanes","master":[0,1],"cue":[1,2]}"#).unwrap();
+        assert!(cue_routing_of(wire).is_err());
+        let wire: CueRoutingWire =
+            serde_json::from_str(r#"{"mode":"lanes","master":[0,1],"cue":[2,900]}"#).unwrap();
+        assert!(cue_routing_of(wire).is_err());
+    }
 
     /// A track whose analysis folder is gone from disk is exported without
     /// analysis; it does not stop the export of everything else.

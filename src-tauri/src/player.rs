@@ -165,6 +165,13 @@ pub struct Player {
     /// The sample rate and buffer size the interface asked for. Like the
     /// device, a change drops the engine and the next play opens with it.
     wish: Mutex<StreamWish>,
+    /// Whether the headphones are routed by the device: separate outputs on
+    /// a controller known to have them, none elsewhere. On by default, so a
+    /// DDJ-FLX4 chosen as the output just works.
+    cue_auto: Mutex<bool>,
+    /// The mixer as the last engine left it, for the next one to start from.
+    mixer: rbl_deck::MixerSettings,
+    fx: rbl_deck::FxSettings,
     /// The metronome's click and volume as the interface last set them,
     /// held for the same reason the limiter is.
     metronome: Mutex<(rbl_deck::ClickSound, rbl_deck::ClickVolume)>,
@@ -201,10 +208,13 @@ impl Player {
             loaded_tracks: Mutex::new(std::collections::HashMap::new()),
             device: Mutex::new(None),
             wish: Mutex::new(StreamWish::default()),
+            cue_auto: Mutex::new(true),
+            mixer: rbl_deck::MixerSettings::default(),
+            fx: rbl_deck::FxSettings::default(),
             metronome: Mutex::new((rbl_deck::ClickSound::Two, rbl_deck::ClickVolume::Large)),
             limiter: Mutex::new(LimiterDto {
                 input_gain_db: rbl_deck::DEFAULT_INPUT_GAIN_DB,
-                enabled: false,
+                enabled: true,
                 ceiling_db: rbl_deck::DEFAULT_CEILING_DB,
                 release_ms: rbl_deck::DEFAULT_RELEASE_MS,
             }),
@@ -231,6 +241,20 @@ fn limiter_of(settings: &rbl_deck::LimiterSettings) -> LimiterDto {
     }
 }
 
+/// Where the headphones go when they follow the device: a DDJ-FLX4's own
+/// interface has them on outputs 3/4; anything else has none.
+fn auto_cue_routing(device: Option<&str>) -> rbl_deck::CueRouting {
+    let name = match device {
+        Some(id) => rbl_deck::output_devices().into_iter().find(|d| d.id == id).map(|d| d.name),
+        None => rbl_deck::default_output_device().map(|d| d.name),
+    };
+    if name.is_some_and(|name| rbl_control::flx4::is_audio_device(&name)) {
+        rbl_deck::CueRouting::Lanes { master: (0, 1), cue: (2, 3) }
+    } else {
+        rbl_deck::CueRouting::Off
+    }
+}
+
 impl Player {
     /// The engine, opening the audio device on first use.
     ///
@@ -250,13 +274,22 @@ impl Player {
             }
         });
         let device = self.device.lock().clone();
-        let wish = *self.wish.lock();
+        let mut wish = *self.wish.lock();
+        if *self.cue_auto.lock() {
+            wish.cue = auto_cue_routing(device.as_deref());
+        }
         let engine = Engine::with_sink(|render| (self.open_sink)(render, device, wish), &events).map_err(|e| {
             AppError::new(ErrorKind::Internal, "The audio device could not be opened.")
                 .with_detail(e.to_string())
         })?;
         // What the interface asked for, before the first callback runs.
         Self::apply_limiter(engine.limiter(), *self.limiter.lock());
+        engine.mixer().copy_from(&self.mixer);
+        engine.fx().copy_from(&self.fx);
+        // The tempo fader moves the speed and holds the key until the deck says otherwise.
+        for deck in Deck::ALL {
+            engine.set_master_tempo(deck, true);
+        }
         engine.master().set_gain(*self.master_level.lock());
         let (sound, volume) = *self.metronome.lock();
         engine.metronome().set_sound(sound);
@@ -322,7 +355,7 @@ impl Player {
         drop(current);
         // Dropped rather than replaced: whatever is playing is on the old
         // device, and the next play opens the new one.
-        self.engine.lock().take().is_some()
+        self.drop_engine()
     }
 
     pub fn device(&self) -> Option<String> {
@@ -338,11 +371,34 @@ impl Player {
         }
         *current = wish;
         drop(current);
-        self.engine.lock().take().is_some()
+        self.drop_engine()
     }
 
     pub fn wish(&self) -> StreamWish {
         *self.wish.lock()
+    }
+
+    /// Drops the engine so the next play opens the device afresh, keeping
+    /// its mixer for the next one. Whether there was one.
+    fn drop_engine(&self) -> bool {
+        let taken = self.engine.lock().take();
+        if let Some(engine) = taken.as_ref() {
+            self.mixer.copy_from(engine.mixer());
+            self.fx.copy_from(engine.fx());
+        }
+        taken.is_some()
+    }
+
+    /// Whether the headphones follow the device. A change drops the engine,
+    /// as a wish does.
+    pub fn set_cue_auto(&self, auto: bool) -> bool {
+        let mut current = self.cue_auto.lock();
+        if *current == auto {
+            return false;
+        }
+        *current = auto;
+        drop(current);
+        self.drop_engine()
     }
 
     /// The metronome's click and volume, now if the engine is up and at its
@@ -532,7 +588,7 @@ mod tests {
     #[test]
     fn a_new_player_carries_the_engine_s_limiter_defaults() {
         let limiter = Player::default().limiter();
-        assert!(!limiter.enabled);
+        assert!(limiter.enabled);
         assert_eq!(limiter.input_gain_db, rbl_deck::DEFAULT_INPUT_GAIN_DB);
         assert_eq!(limiter.ceiling_db, rbl_deck::DEFAULT_CEILING_DB);
         assert_eq!(limiter.release_ms, rbl_deck::DEFAULT_RELEASE_MS);

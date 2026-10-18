@@ -103,6 +103,12 @@ pub struct ChannelSettings {
     bands: [AtomicU32; 3],
     /// Which of them are killed.
     kills: [AtomicBool; 3],
+    /// The channel's CUE button: whether it is heard on the headphones.
+    cue: AtomicBool,
+    /// CFX, 0 to 1: centre is off, left a low pass, right a high pass.
+    filter: AtomicU32,
+    /// The loudest sample after the strip since the last read, for a meter.
+    level: AtomicU32,
 }
 
 impl Default for ChannelSettings {
@@ -116,6 +122,9 @@ impl Default for ChannelSettings {
                 AtomicU32::new(0.5_f32.to_bits()),
             ],
             kills: [AtomicBool::new(false), AtomicBool::new(false), AtomicBool::new(false)],
+            cue: AtomicBool::new(false),
+            filter: AtomicU32::new(0.5_f32.to_bits()),
+            level: AtomicU32::new(0),
         }
     }
 }
@@ -180,6 +189,40 @@ impl ChannelSettings {
         self.kills.get(band.index()).is_some_and(|slot| slot.load(Ordering::Relaxed))
     }
 
+    /// Sends the channel to the headphones, pre-fader, as a DJM's CUE does.
+    pub fn set_cue(&self, on: bool) {
+        self.cue.store(on, Ordering::Relaxed);
+    }
+
+    pub fn cue(&self) -> bool {
+        self.cue.load(Ordering::Relaxed)
+    }
+
+    pub fn set_filter(&self, position: f32) {
+        let safe = if position.is_finite() { position.clamp(0.0, 1.0) } else { 0.5 };
+        self.filter.store(safe.to_bits(), Ordering::Relaxed);
+    }
+
+    pub fn filter(&self) -> f32 {
+        f32::from_bits(self.filter.load(Ordering::Relaxed))
+    }
+
+    /// Held rather than replaced, so a peak between two reads is not lost.
+    pub(crate) fn report_level(&self, peak: f32) {
+        let mut current = self.level.load(Ordering::Relaxed);
+        while peak > f32::from_bits(current) {
+            match self.level.compare_exchange_weak(current, peak.to_bits(), Ordering::Relaxed, Ordering::Relaxed) {
+                Ok(_) => return,
+                Err(seen) => current = seen,
+            }
+        }
+    }
+
+    /// The channel's peak before its fader since the last read, and clears it.
+    pub fn take_level(&self) -> f32 {
+        f32::from_bits(self.level.swap(0, Ordering::Relaxed))
+    }
+
     /// The gain each band is asking for, high to low.
     fn wanted(&self, curve: Curve) -> [f32; 3] {
         let mut out = [1.0_f32; 3];
@@ -241,6 +284,12 @@ pub struct MixerSettings {
     position: AtomicU32,
     curve: AtomicU32,
     fade: AtomicU32,
+    /// HEADPHONES MIX: 0 is the cue alone, 1 is the master alone.
+    headphone_mix: AtomicU32,
+    /// Off is THRU: both decks at their channel faders, whatever the crossfader says.
+    crossfader_on: AtomicBool,
+    /// MASTER CUE: the master on the headphones, as if it were cued.
+    master_cue: AtomicBool,
 }
 
 impl Default for MixerSettings {
@@ -250,6 +299,12 @@ impl Default for MixerSettings {
             position: AtomicU32::new(0.5_f32.to_bits()),
             curve: AtomicU32::new(Curve::Eq.to_wire()),
             fade: AtomicU32::new(Fade::Full.to_wire()),
+            // A knob nobody has reported is on CUE: the headphones are for
+            // what is cued, and a controller's real position arrives when
+            // it moves.
+            headphone_mix: AtomicU32::new(0.0_f32.to_bits()),
+            crossfader_on: AtomicBool::new(true),
+            master_cue: AtomicBool::new(false),
         }
     }
 }
@@ -286,8 +341,85 @@ impl MixerSettings {
 
     /// What each deck is multiplied by at the current fader position.
     pub(crate) fn fader(&self) -> (f32, f32) {
+        if !self.crossfader_on() {
+            return (1.0, 1.0);
+        }
         self.fade().split(self.crossfade())
     }
+
+    pub fn set_crossfader_on(&self, on: bool) {
+        self.crossfader_on.store(on, Ordering::Relaxed);
+    }
+
+    pub fn crossfader_on(&self) -> bool {
+        self.crossfader_on.load(Ordering::Relaxed)
+    }
+
+    pub fn set_master_cue(&self, on: bool) {
+        self.master_cue.store(on, Ordering::Relaxed);
+    }
+
+    pub fn master_cue(&self) -> bool {
+        self.master_cue.load(Ordering::Relaxed)
+    }
+
+    pub fn set_headphone_mix(&self, position: f32) {
+        let safe = if position.is_finite() { position.clamp(0.0, 1.0) } else { 0.5 };
+        self.headphone_mix.store(safe.to_bits(), Ordering::Relaxed);
+    }
+
+    pub fn headphone_mix(&self) -> f32 {
+        f32::from_bits(self.headphone_mix.load(Ordering::Relaxed))
+    }
+
+    /// Takes every knob, fader and switch from `other`: an engine rebuilt for
+    /// a new device keeps the mixer the hardware and the interface show.
+    pub fn copy_from(&self, other: &MixerSettings) {
+        for (mine, theirs) in self.channels.iter().zip(other.channels.iter()) {
+            mine.set_trim(theirs.trim());
+            mine.set_volume(theirs.volume());
+            mine.set_cue(theirs.cue());
+            mine.set_filter(theirs.filter());
+            for band in Band::ALL {
+                mine.set_band(band, theirs.band(band));
+                mine.set_kill(band, theirs.killed(band));
+            }
+        }
+        self.set_crossfade(other.crossfade());
+        self.set_curve(other.curve());
+        self.set_fade(other.fade());
+        self.set_headphone_mix(other.headphone_mix());
+        self.set_crossfader_on(other.crossfader_on());
+        self.set_master_cue(other.master_cue());
+    }
+
+    /// What the cue sum and the master are multiplied by on the headphones.
+    ///
+    /// **[ASSUME]** Constant power, like `Fade::Power`; not yet compared with
+    /// rekordbox's own HEADPHONES MIX by ear.
+    pub(crate) fn headphone_split(&self) -> (f32, f32) {
+        Fade::Power.split(self.headphone_mix())
+    }
+}
+
+/// The cue sum's headroom before the headphone soft clip: −6 dB, so two
+/// decks cued at full level meet the knee rather than pass it.
+pub(crate) const CUE_HEADROOM: f32 = 0.501_187_2;
+
+/// Where the headphone soft clip starts bending.
+const KNEE: f32 = 0.8;
+
+/// Linear up to `KNEE`, then a tanh shoulder up to full scale.
+///
+/// Not the master limiter: a limiter pumping under a cued track is exactly
+/// what a DJ listening for the beat does not want to hear.
+pub(crate) fn soft_clip(x: f32) -> f32 {
+    let size = x.abs();
+    if size <= KNEE {
+        return x;
+    }
+    let bent = KNEE + (1.0 - KNEE) * ((size - KNEE) / (1.0 - KNEE)).tanh();
+    bent.copysign(x)
 }
 
 /// Below this a filter is taken as having stopped ringing.
@@ -416,6 +548,52 @@ impl Bands {
     }
 }
 
+/// Within this of the centre CFX is off, so the knob at twelve o'clock is the
+/// track bit for bit.
+const FILTER_DEAD: f32 = 0.04;
+/// How far past the dead zone the filter takes to fade fully in, so leaving
+/// the centre does not switch a filter in with a step.
+const FILTER_FADE: f32 = 0.1;
+/// 1/Q: a little resonance, as a DJ filter has. **[ASSUME]** to be set by ear.
+const FILTER_K: f32 = 1.1;
+
+/// A state-variable filter, in the trapezoidal (TPT) form that stays stable
+/// while its cutoff is swept every frame.
+#[derive(Debug, Clone, Copy, Default)]
+struct Svf {
+    ic1: f32,
+    ic2: f32,
+}
+
+impl Svf {
+    /// The low-pass and high-pass outputs for one sample; `g` is
+    /// `tan(pi * cutoff / rate)`.
+    fn run(&mut self, x: f32, g: f32) -> (f32, f32) {
+        let a1 = 1.0 / (1.0 + g * (g + FILTER_K));
+        let a2 = g * a1;
+        let a3 = g * a2;
+        let v3 = x - self.ic2;
+        let v1 = a1 * self.ic1 + a2 * v3;
+        let v2 = self.ic2 + a2 * self.ic1 + a3 * v3;
+        self.ic1 = flush(2.0 * v1 - self.ic1);
+        self.ic2 = flush(2.0 * v2 - self.ic2);
+        (v2, x - FILTER_K * v1 - v2)
+    }
+}
+
+/// The CFX knob at `at` as a cutoff, whether it is a high pass, and how much
+/// of the filtered signal is heard. Left sweeps a low pass from 20 kHz down to
+/// 40 Hz, right a high pass from 20 Hz up to 12 kHz.
+fn filter_shape(at: f32) -> (f32, bool, f32) {
+    let from_centre = (at.clamp(0.0, 1.0) - 0.5) * 2.0;
+    let wet = ((from_centre.abs() - FILTER_DEAD) / FILTER_FADE).clamp(0.0, 1.0);
+    if from_centre < 0.0 {
+        (20_000.0 * (40.0_f32 / 20_000.0).powf(-from_centre), false, wet)
+    } else {
+        (20.0 * (12_000.0_f32 / 20.0).powf(from_centre), true, wet)
+    }
+}
+
 /// One deck's strip, as the callback owns it.
 #[derive(Debug)]
 pub struct Channel {
@@ -423,6 +601,11 @@ pub struct Channel {
     gains: [Smoothed; 3],
     trim: Smoothed,
     fader: Smoothed,
+    /// The CUE send, walked between 0 and 1 so pressing CUE does not click.
+    cue: Smoothed,
+    filters: [Svf; 2],
+    filter_at: Smoothed,
+    rate: f32,
 }
 
 impl Channel {
@@ -437,6 +620,10 @@ impl Channel {
             ],
             trim: Smoothed::new(1.0, rate),
             fader: Smoothed::new(1.0, rate),
+            cue: Smoothed::new(0.0, rate),
+            filters: [Svf::default(); 2],
+            filter_at: Smoothed::new(0.5, rate),
+            rate: rate.max(1) as f32,
         }
     }
 
@@ -445,11 +632,25 @@ impl Channel {
     /// `fader` is the combined channel-volume/crossfader gain. Every gain moves
     /// per frame rather than per buffer, so nothing here can click.
     pub fn process(&mut self, out: &mut [f32], settings: &ChannelSettings, curve: Curve, fader: f32) {
+        self.process_strip(out, settings, curve);
+        self.apply_fader(out, fader);
+    }
+
+    /// Trim, the three bands and CFX: everything before the fader, which is
+    /// where the headphones listen.
+    pub fn process_strip(&mut self, out: &mut [f32], settings: &ChannelSettings, curve: Curve) {
         let wanted = settings.wanted(curve);
         let trim = settings.trim();
+        let filter = settings.filter();
         for frame in out.chunks_exact_mut(2) {
             let trim = self.trim.step(trim);
-            let fader = self.fader.step(fader);
+            let (hz, high_pass, wet) = filter_shape(self.filter_at.step(filter));
+            let g = if wet > 0.0 {
+                (std::f32::consts::PI * (hz / self.rate).min(0.45)).tan()
+            } else {
+                self.filters = [Svf::default(); 2];
+                0.0
+            };
             let mut gains = [0.0_f32; 3];
             for (slot, (smoothed, target)) in
                 gains.iter_mut().zip(self.gains.iter_mut().zip(wanted.iter()))
@@ -463,7 +664,40 @@ impl Channel {
                 for (band, gain) in split.iter().zip(gains.iter()) {
                     sum += band * gain;
                 }
-                *sample = sum * fader;
+                if wet > 0.0 {
+                    if let Some(svf) = self.filters.get_mut(side) {
+                        let (low, high) = svf.run(sum, g);
+                        let filtered = if high_pass { high } else { low };
+                        sum += (filtered - sum) * wet;
+                    }
+                }
+                *sample = sum;
+            }
+        }
+    }
+
+    /// The channel fader and crossfader, after the strip.
+    pub fn apply_fader(&mut self, out: &mut [f32], fader: f32) {
+        for frame in out.chunks_exact_mut(2) {
+            let gain = self.fader.step(fader);
+            for sample in frame {
+                *sample *= gain;
+            }
+        }
+    }
+
+    /// Adds the strip's output to the cue sum while CUE is on, fading in and
+    /// out rather than switching. `to` may be shorter than `from` — or empty,
+    /// when there are no headphones — and only what fits is sent.
+    pub fn send_cue(&mut self, from: &[f32], to: &mut [f32], on: bool) {
+        let target = if on { 1.0 } else { 0.0 };
+        if !on && self.cue.value() <= 0.0 {
+            return;
+        }
+        for (source, sink) in from.chunks_exact(2).zip(to.chunks_exact_mut(2)) {
+            let gain = self.cue.step(target);
+            for (add, sample) in source.iter().zip(sink.iter_mut()) {
+                *sample += add * gain;
             }
         }
     }
@@ -622,6 +856,118 @@ mod tests {
         assert_eq!(settings.volume(), 1.0);
         settings.set_volume(-9.0);
         assert_eq!(settings.volume(), 0.0);
+    }
+
+    #[test]
+    fn the_headphone_mix_runs_from_cue_alone_to_master_alone() {
+        let mixer = MixerSettings::default();
+        assert_eq!(mixer.headphone_mix(), 0.0, "a knob nobody has reported is on CUE");
+        mixer.set_headphone_mix(0.0);
+        let (cue, master) = mixer.headphone_split();
+        assert_eq!(cue, 1.0);
+        assert!(master.abs() < 1e-6);
+        mixer.set_headphone_mix(1.0);
+        let (cue, master) = mixer.headphone_split();
+        assert!(cue.abs() < 1e-6);
+        assert_eq!(master, 1.0);
+        mixer.set_headphone_mix(f32::NAN);
+        assert_eq!(mixer.headphone_mix(), 0.5);
+    }
+
+    #[test]
+    fn the_soft_clip_is_transparent_below_its_knee_and_never_passes_full_scale() {
+        for x in [-0.8_f32, -0.3, 0.0, 0.5, 0.8] {
+            assert_eq!(soft_clip(x), x);
+        }
+        for x in [0.9_f32, 1.5, 4.0, 100.0] {
+            let y = soft_clip(x);
+            // f32's tanh rounds to 1.0 a little past 4, so full scale is reached.
+            assert!(y > KNEE && y <= 1.0, "{x} came out at {y}");
+            assert_eq!(soft_clip(-x), -y, "the curve must be symmetric");
+        }
+        // No corner at the knee: just past it, it still rises at about 1:1.
+        let slope = (soft_clip(KNEE + 1e-3) - KNEE) / 1e-3;
+        assert!((slope - 1.0).abs() < 0.01, "the knee bends at {slope}");
+    }
+
+    #[test]
+    fn cue_is_a_switch_on_the_channel_and_starts_off() {
+        let settings = ChannelSettings::default();
+        assert!(!settings.cue());
+        settings.set_cue(true);
+        assert!(settings.cue());
+    }
+
+    #[test]
+    fn cfx_at_centre_is_the_track_bit_for_bit() {
+        let settings = ChannelSettings::default();
+        let mut with = Channel::new(RATE);
+        let mut audio = tone(440.0, RATE as usize / 8);
+        with.process_strip(&mut audio, &settings, Curve::Eq);
+        settings.set_filter(0.51);
+        let mut nudged = tone(440.0, RATE as usize / 8);
+        Channel::new(RATE).process_strip(&mut nudged, &settings, Curve::Eq);
+        assert_eq!(audio, nudged, "inside the dead zone CFX must do nothing at all");
+    }
+
+    #[test]
+    fn cfx_left_takes_the_top_and_right_takes_the_bottom() {
+        let settings = ChannelSettings::default();
+        settings.set_filter(0.0);
+        let mut channel = Channel::new(RATE);
+        let top = run(&mut channel, &settings, Curve::Eq, 8_000.0);
+        let mut channel = Channel::new(RATE);
+        let bass = run(&mut channel, &settings, Curve::Eq, 30.0);
+        assert!(top < 0.01, "a closed low pass let 8 kHz through at {top}");
+        assert!(bass > 0.8, "a closed low pass took the bass to {bass}");
+
+        settings.set_filter(1.0);
+        let mut channel = Channel::new(RATE);
+        let bass = run(&mut channel, &settings, Curve::Eq, 60.0);
+        assert!(bass < 0.01, "a closed high pass let 60 Hz through at {bass}");
+    }
+
+    #[test]
+    fn sweeping_cfx_never_blows_up() {
+        let settings = ChannelSettings::default();
+        let mut channel = Channel::new(RATE);
+        let mut worst = 0.0_f32;
+        for step in 0..200 {
+            settings.set_filter((step % 20) as f32 / 19.0);
+            let mut audio = tone(1_000.0, 256);
+            channel.process_strip(&mut audio, &settings, Curve::Eq);
+            worst = audio.iter().fold(worst, |a, s| a.max(s.abs()));
+        }
+        assert!(worst.is_finite() && worst < 2.0, "a swept filter peaked at {worst}");
+    }
+
+    #[test]
+    fn a_crossfader_switched_off_leaves_both_decks_whole() {
+        let mixer = MixerSettings::default();
+        mixer.set_crossfade(0.0);
+        mixer.set_crossfader_on(false);
+        assert_eq!(mixer.fader(), (1.0, 1.0));
+        mixer.set_crossfader_on(true);
+        assert!(mixer.fader().1.abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_copied_mixer_has_every_knob_where_the_old_one_left_it() {
+        let old = MixerSettings::default();
+        old.channels[1].set_volume(0.3);
+        old.channels[1].set_cue(true);
+        old.channels[0].set_filter(0.9);
+        old.channels[0].set_kill(Band::Mid, true);
+        old.set_crossfade(0.1);
+        old.set_headphone_mix(0.7);
+        let fresh = MixerSettings::default();
+        fresh.copy_from(&old);
+        assert_eq!(fresh.channels[1].volume(), 0.3);
+        assert!(fresh.channels[1].cue());
+        assert_eq!(fresh.channels[0].filter(), 0.9);
+        assert!(fresh.channels[0].killed(Band::Mid));
+        assert_eq!(fresh.crossfade(), 0.1);
+        assert_eq!(fresh.headphone_mix(), 0.7);
     }
 
     #[test]

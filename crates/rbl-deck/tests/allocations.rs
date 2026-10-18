@@ -79,6 +79,8 @@ static ALLOCATOR: Counting = Counting;
 struct Watched {
     render: Mutex<Render>,
     buffer: Mutex<Vec<f32>>,
+    /// Headphones too, so the cue path is counted along with the master.
+    cue: Mutex<Vec<f32>>,
     running: Mutex<bool>,
 }
 
@@ -87,6 +89,7 @@ impl Watched {
         Self {
             render: Mutex::new(render),
             buffer: Mutex::new(vec![0.0; BUFFER * 2]),
+            cue: Mutex::new(vec![0.0; BUFFER * 2]),
             running: Mutex::new(false),
         }
     }
@@ -94,11 +97,12 @@ impl Watched {
     /// One callback's worth, counting what it allocated.
     fn pull(&self, count_it: bool) -> usize {
         let mut buffer = self.buffer.lock().unwrap();
+        let mut cue = self.cue.lock().unwrap();
         let mut render = self.render.lock().unwrap();
         buffer.fill(0.0);
         COUNT.with(|c| c.set(0));
         WATCHING.with(|w| w.set(count_it));
-        render(&mut buffer);
+        render(&mut buffer, &mut cue);
         WATCHING.with(|w| w.set(false));
         COUNT.with(Cell::get)
     }
@@ -190,6 +194,11 @@ fn the_audio_callback_allocates_nothing() {
             80 => engine.pause(Deck::A),
             100 => engine.play(Deck::A),
             140 => engine.master().set_gain(0.3),
+            145 => engine.mixer().channels[0].set_filter(0.2),
+            147 => engine.fx().set_on(true),
+            148 => engine.fx().set_kind(rbl_deck::FxKind::Reverb),
+            150 => engine.mixer().channels[0].set_cue(true),
+            155 => engine.mixer().set_headphone_mix(0.2),
             160 => engine.mixer().set_crossfade(0.8),
             // The tempo control puts a stretcher in the path, which is the
             // most likely place for a buffer to be grown mid-track.

@@ -734,6 +734,25 @@ export interface Backend {
   setChannelVolume(deck: DeckId, volume: number): Promise<void>;
   /** The crossfader: 0 is deck A alone, 1 is deck B alone, 0.5 is both. */
   setCrossfade(position: number): Promise<void>;
+  /** A channel's CUE button: the deck, before its fader, on the headphones. */
+  setChannelCue(deck: DeckId, on: boolean): Promise<void>;
+  /** HEADPHONES MIX: 0 is the cue alone, 1 is the master alone. */
+  setHeadphoneMix(position: number): Promise<void>;
+  /**
+   * Preferences › Audio › Headphones, asked of the device the next time a
+   * deck plays. A device with too few outputs is opened without headphones.
+   */
+  setCueRouting(routing: CueRouting): Promise<void>;
+  /** CFX: 0.5 is off, below is a low pass and above a high pass. */
+  setChannelFilter(deck: DeckId, position: number): Promise<void>;
+  /** The crossfader on, or off (THRU): both decks at their channel faders. */
+  setCrossfaderOn(on: boolean): Promise<void>;
+  setBeatFx(fx: BeatFxSettings): Promise<void>;
+  /** What a connected DJ controller asks for. Returns the unsubscribe. */
+  onControllerIntent(listener: (intent: ControllerIntent) => void): () => void;
+  onControllerStatus(listener: (status: ControllerStatus) => void): () => void;
+  controllerStatus(): Promise<ControllerStatus>;
+  controllerLeds(deck: DeckId, leds: ControllerLeds): Promise<void>;
   /** EQ or ISOLATOR — the bottom of each band's travel, and nothing else. */
   setEqCurve(isolator: boolean): Promise<void>;
   /** Both decks now, to anchor the interface when it starts. */
@@ -1102,6 +1121,78 @@ export interface Limiter {
 
 /** The three bands of a channel strip, high to low as the strip is drawn. */
 export type EqBand = "high" | "mid" | "low";
+
+/**
+ * Where the headphones are heard. Lanes are output channels counted from
+ * zero: a DDJ-FLX4 is master `[0, 1]` and cue `[2, 3]`. `split` is one stereo
+ * output with the cue in the left ear and the master in the right.
+ */
+export type CueRouting =
+  | { mode: "auto" }
+  | { mode: "off" }
+  | { mode: "split" }
+  | { mode: "lanes"; master: [number, number]; cue: [number, number] };
+
+/**
+ * What a DJ controller asks for, decoded by `crates/rbl-control`. Positions
+ * are 0 to 1 unless said otherwise.
+ */
+export type ControllerIntent =
+  | { type: "trim"; deck: DeckId; value: number }
+  | { type: "eq"; deck: DeckId; band: EqBand; value: number }
+  | { type: "filter"; deck: DeckId; value: number }
+  | { type: "volume"; deck: DeckId; value: number }
+  | { type: "crossfader"; value: number }
+  | { type: "headphoneMix"; value: number }
+  | { type: "channelCue"; deck: DeckId }
+  /** −1 (slowest) to 1 (fastest) within the deck's tempo range. */
+  | { type: "tempo"; deck: DeckId; value: number }
+  | { type: "button"; deck: DeckId; button: ControllerButton; pressed: boolean }
+  | { type: "pad"; deck: DeckId; mode: PadMode; pad: number; shift: boolean; pressed: boolean }
+  | { type: "browse"; steps: number }
+  | { type: "browsePress"; shift: boolean }
+  | { type: "load"; deck: DeckId }
+  | { type: "fxSelect"; previous: boolean }
+  | { type: "fxBeat"; longer: boolean }
+  | { type: "fxToggle"; off: boolean }
+  | { type: "fxChannel"; deck: DeckId; selected: boolean }
+  | { type: "fxDepth"; value: number }
+  | { type: "masterCue" }
+  /** The platter touched or let go. */
+  | { type: "jogTouch"; deck: DeckId; touched: boolean }
+  /** A turn of the wheel, in its own ticks; positive is clockwise. */
+  | { type: "jog"; deck: DeckId; mode: "scratch" | "bend" | "search"; ticks: number };
+
+/** BEAT FX as the engine runs it. */
+export interface BeatFxSettings {
+  on: boolean;
+  kind: "echo" | "reverb";
+  /** After a channel's fader, or on the master. */
+  target: DeckId | "master";
+  /** LEVEL/DEPTH, 0 to 1. */
+  depth: number;
+  /** The echo's time and the reverb's size, worked out from the beat and the BPM. */
+  beatMs: number;
+}
+
+export type ControllerButton =
+  | "play" | "shiftPlay" | "cue" | "trackStart" | "sync" | "syncHold" | "tempoRange"
+  | "loopIn" | "loopOut" | "reloop" | "shiftReloop" | "callPrevious" | "callNext"
+  | "shiftCallPrevious" | "shiftCallNext" | "quantize";
+
+export type PadMode =
+  | "hotCue" | "padFx1" | "beatJump" | "sampler" | "keyboard" | "padFx2" | "beatLoop" | "keyShift";
+
+export interface ControllerStatus {
+  /** The connected controller's port name, or null when none is. */
+  name: string | null;
+}
+
+/** The deck state only the interface knows, for the controller's LEDs. */
+export interface ControllerLeds {
+  sync?: boolean;
+  hotCues?: boolean[];
+}
 
 export interface DeckTick {
   /** The engine's frame counter, in device-rate frames. */

@@ -1601,7 +1601,7 @@ export function createMockBackend(options: MockOptions = {}): Backend {
   let master = 0.891_250_9;
 
   /** The master limiter, likewise. */
-  let limiter: Limiter = { enabled: false, inputGainDb: -4, ceilingDb: 0, releaseMs: 250 };
+  let limiter: Limiter = { enabled: true, inputGainDb: -4, ceilingDb: 0, releaseMs: 250 };
 
   const preferencesRequestListeners = new Set<(what: PreferencesRequest) => void>();
 
@@ -2489,6 +2489,16 @@ export function createMockBackend(options: MockOptions = {}): Backend {
     setChannelTrim: () => wait(undefined),
     setChannelVolume: () => wait(undefined),
     setCrossfade: () => wait(undefined),
+    setChannelCue: () => wait(undefined),
+    setHeadphoneMix: () => wait(undefined),
+    setCueRouting: () => wait(undefined),
+    setChannelFilter: () => wait(undefined),
+    setCrossfaderOn: () => wait(undefined),
+    setBeatFx: () => wait(undefined),
+    onControllerIntent: () => () => undefined,
+    onControllerStatus: () => () => undefined,
+    controllerStatus: () => wait({ name: null }),
+    controllerLeds: () => wait(undefined),
     setEqCurve: () => wait(undefined),
     deckScrubEnd: (deck) => {
       deckOf(deck).generation += 1;
