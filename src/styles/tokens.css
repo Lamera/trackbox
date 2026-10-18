@@ -208,6 +208,7 @@
   --s-player-gutter-h: 4px; /* user adjustment: increase the black gap below the player by 1px from the measured 3px */
   --s-player-transport-w: 80px; /* measured from a 2x capture of rekordbox 7.2.11 running; transport column x 0..80pt */
   --s-player-right-w: 209px; /* measured from a 2x capture of rekordbox 7.2.11 running; memory/hotcue panel x 1711..1920pt */
+  --s-player-right-w-shared: 281px; /* UNMEASURED — the same panel beside each of two stacked decks, widened so the eight pads are big enough to hit */
   --s-player-margin: 2px; /* black around the deck column, so it reads as a panel rather than as the whole strip */
   --s-player-inset: 12px; /* the deck's left inset; the rows had 16 on the left, 12 on the right, and the detail none at all */
   --s-player-zoom-inset: 8px; /* how far the zoom cluster floats in from the left edge of the detail waveform it sits over */

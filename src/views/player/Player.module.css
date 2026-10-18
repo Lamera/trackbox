@@ -9,7 +9,7 @@
 /* Sharing a transport column with the other deck leaves this one two columns:
    the waveforms and the panel beside them. */
 .player[data-shared] {
-  grid-template-columns: 1fr var(--s-player-right-w);
+  grid-template-columns: 1fr var(--s-player-right-w-shared);
   /* Its height comes from the row it is in, which is half the pair's band. */
   height: 100%;
   min-height: 0;
@@ -1197,8 +1197,8 @@ button.cueDelete:disabled { color: var(--c-icon-off); }
 /* The pads beside the deck, laid out as the controller's: the four mode
    buttons with their SHIFT modes printed below, then two rows of four pads. */
 .padPanel {
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   min-height: 0;
 }
 .padModes {
@@ -1244,12 +1244,15 @@ button.cueDelete:disabled { color: var(--c-icon-off); }
   color: var(--c-text-dim);
 }
 .padGrid {
+  flex: 1;
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   grid-template-rows: repeat(2, minmax(var(--s-cue-row-h), 1fr));
   gap: 5px;
   padding: 5px;
   min-height: 0;
+  /* The pads' print grows with the panel's width. */
+  container-type: inline-size;
 }
 /* One pad: the hardware's dark rubber square, its edge lit as the LED is. */
 .padCell {
@@ -1298,10 +1301,10 @@ button.cueDelete:disabled { color: var(--c-icon-off); }
   align-items: center;
   justify-content: center;
   flex: none;
-  min-width: 13px;
-  height: 13px;
+  min-width: clamp(13px, 7cqi, 20px);
+  height: clamp(13px, 7cqi, 20px);
   border-radius: 2px;
-  font-size: var(--f-size-xs);
+  font-size: clamp(10px, 5cqi, 13px);
   color: inherit;
 }
 .padCell[data-lit] .padLetter { background: var(--pad-lit); color: var(--c-black); }
@@ -1310,16 +1313,16 @@ button.cueDelete:disabled { color: var(--c-icon-off); }
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  font-size: 9px;
+  font-size: clamp(9px, 4.6cqi, 13px);
   letter-spacing: -0.4px;
   font-variant-numeric: tabular-nums;
 }
-.padSub { color: var(--c-text-dim); font-size: 9px; }
+.padSub { color: var(--c-text-dim); font-size: clamp(9px, 4.2cqi, 12px); }
 .padCell[data-on] .padSub { color: inherit; }
 .padCell .cueName {
   flex: none;
   max-width: 100%;
-  font-size: 9px;
+  font-size: clamp(9px, 4.2cqi, 11px);
   font-weight: 400;
   color: var(--c-text-dim);
   text-overflow: ellipsis;
