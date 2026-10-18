@@ -25,9 +25,8 @@ pub fn is_audio_device(name: &str) -> bool {
     name.contains("DDJ-FLX4")
 }
 
-/// Sent on connect and every 200 ms. It also asks the hardware for the
-/// position of every knob and fader, so the software starts where the
-/// hardware is.
+/// Sent on connect and every 200 ms. [OBS] It does not make the hardware
+/// report its knob and fader positions; nothing found so far does.
 pub const KEEPALIVE: [u8; 12] = [0xF0, 0x00, 0x40, 0x05, 0x00, 0x00, 0x04, 0x05, 0x00, 0x50, 0x02, 0xF7];
 
 const GLOBAL: u8 = 6;
@@ -126,6 +125,8 @@ impl Flx4 {
                 0x60 => Button::TempoRange,
                 0x10 => Button::LoopIn,
                 0x11 => Button::LoopOut,
+                0x4C => Button::ShiftLoopIn,
+                0x4E => Button::ShiftLoopOut,
                 0x4D => Button::Reloop,
                 0x50 => Button::ShiftReloop,
                 0x51 => Button::CallPrevious,
@@ -283,8 +284,14 @@ fn trim_gain(at: f32) -> f32 {
 pub fn leds(deck: Deck, state: &DeckLeds) -> Vec<Short> {
     let channel = u8::from(deck == Deck::B);
     let note = 0x90 | channel;
-    // The loop buttons are lit while there is no loop and blink in one.
+    // The loop buttons are lit while there is no loop and blink in one; while
+    // the jog moves a loop point, only that point's button blinks.
     let loop_lit = !state.looping || state.blink;
+    let (in_lit, out_lit) = match state.loop_adjust {
+        1 => (state.blink, false),
+        2 => (false, state.blink),
+        _ => (loop_lit, loop_lit),
+    };
     let mut out = vec![
         [note, 0x0B, on(state.play)],
         [note, 0x47, on(state.play)],
@@ -292,10 +299,10 @@ pub fn leds(deck: Deck, state: &DeckLeds) -> Vec<Short> {
         [note, 0x48, on(state.cue)],
         [note, 0x58, on(state.sync)],
         [note, 0x54, on(state.channel_cue)],
-        [note, 0x10, on(loop_lit)],
-        [note, 0x4C, on(loop_lit)],
-        [note, 0x11, on(loop_lit)],
-        [note, 0x4E, on(loop_lit)],
+        [note, 0x10, on(in_lit)],
+        [note, 0x4C, on(in_lit)],
+        [note, 0x11, on(out_lit)],
+        [note, 0x4E, on(out_lit)],
         [note, 0x4D, on(state.looping)],
         [note, 0x50, on(state.looping)],
         [0xB0 | channel, 0x02, state.level.min(127)],
@@ -323,6 +330,38 @@ pub fn fx_leds(lit: bool) -> [Short; 4] {
 #[must_use]
 pub fn master_cue_led(lit: bool) -> Short {
     [0x96, 0x63, on(lit)]
+}
+
+/// Every LED this profile lights, put out: for a disconnect and for quitting,
+/// so the hardware is not left showing a deck that is gone.
+#[must_use]
+pub fn all_off() -> Vec<Short> {
+    let mut out = Vec::new();
+    for deck in Deck::ALL {
+        let note = 0x90 | u8::from(deck == Deck::B);
+        // Pads are added below in every mode, not only the hot cues `leds` covers.
+        out.extend(
+            leds(deck, &DeckLeds::default())
+                .into_iter()
+                .filter(|[status, ..]| !(0x97..=0x9A).contains(status))
+                .map(|[status, data, _]| [status, data, 0]),
+        );
+        out.extend(PAD_MODES.map(|mode| [note, mode, 0]));
+    }
+    for layer in 0x97..=0x9A {
+        for mode in 0_u8..8 {
+            out.extend((0_u8..8).map(|pad| [layer, (mode << 4) | pad, 0]));
+        }
+    }
+    out.extend(fx_leds(false));
+    out.push(master_cue_led(false));
+    out
+}
+
+/// **[MIXXX]** The jog ring's "track loaded" animation on `deck`.
+#[must_use]
+pub fn track_loaded(deck: Deck) -> Short {
+    [0x9F, u8::from(deck == Deck::B), 0x7F]
 }
 
 #[cfg(test)]
@@ -504,6 +543,46 @@ mod tests {
         assert!(out.contains(&[0x90, 0x4D, 0x7F]));
         let out = leds(Deck::A, &DeckLeds { blink: true, ..looping });
         assert!(out.contains(&[0x90, 0x10, 0x7F]));
+    }
+
+    #[test]
+    fn moving_a_loop_point_blinks_only_its_button() {
+        let adjusting = DeckLeds { looping: true, blink: true, loop_adjust: 2, ..DeckLeds::default() };
+        let out = leds(Deck::A, &adjusting);
+        assert!(out.contains(&[0x90, 0x11, 0x7F]));
+        assert!(out.contains(&[0x90, 0x10, 0x00]), "the other end stays dark");
+    }
+
+    #[test]
+    fn all_off_puts_out_everything_lit_once() {
+        let off = all_off();
+        assert!(off.iter().all(|[_, _, value]| *value == 0));
+        let mut unique = off.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), off.len(), "no LED twice");
+        let lit = DeckLeds {
+            play: true, cue: true, sync: true, looping: true, channel_cue: true, hot_cues: [true; 8], pad_mode: 0x6F,
+            blink: true, level: 127, loop_adjust: 0,
+        };
+        for deck in Deck::ALL {
+            for [status, data, _] in leds(deck, &lit) {
+                assert!(off.contains(&[status, data, 0]), "{status:#x} {data:#x} is put out");
+            }
+        }
+        for [status, data, _] in fx_leds(true) {
+            assert!(off.contains(&[status, data, 0]));
+        }
+        assert!(off.contains(&[0x96, 0x63, 0]));
+        assert!(off.contains(&[0x9A, 0x77, 0]), "the last pad of the last mode on deck 2 with SHIFT");
+        assert!(off.contains(&[0x90, 0x1B, 0]) && off.contains(&[0x91, 0x6F, 0]), "pad mode buttons");
+        assert!(off.contains(&[0xB1, 0x02, 0]), "the channel meter");
+    }
+
+    #[test]
+    fn track_loaded_names_the_deck() {
+        assert_eq!(track_loaded(Deck::A), [0x9F, 0x00, 0x7F]);
+        assert_eq!(track_loaded(Deck::B), [0x9F, 0x01, 0x7F]);
     }
 
     #[test]

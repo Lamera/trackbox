@@ -2,9 +2,9 @@
 //!
 //! `cargo run -p rbl-control --example midi-capture -- [seconds]`
 //!
-//! Lists the MIDI ports, connects to the controller, sends the keepalive
-//! (which also makes it report every knob and fader), and prints each message
-//! with a timestamp in milliseconds. Move a control to see its bytes.
+//! Lists the MIDI ports, connects to the controller, sends the keepalive, and
+//! prints each message with a timestamp in milliseconds. Move a control to
+//! see its bytes.
 #![allow(clippy::print_stdout, reason = "a capture tool prints what it captures")]
 
 #[cfg(any(target_os = "macos", windows))]
@@ -72,6 +72,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         pad_mode: 0x1B,
         blink: true,
         level: 127,
+        loop_adjust: 0,
     };
     let light = |out: &mut midir::MidiOutputConnection| -> Result<(), midir::SendError> {
         if leds {

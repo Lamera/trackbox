@@ -54,6 +54,9 @@ pub enum Button {
     TempoRange,
     LoopIn,
     LoopOut,
+    /// SHIFT + LOOP IN / OUT: move that loop point with the jog.
+    ShiftLoopIn,
+    ShiftLoopOut,
     Reloop,
     ShiftReloop,
     CallPrevious,
@@ -167,6 +170,8 @@ pub struct DeckLeds {
     pub pad_mode: u8,
     /// The half-second blink an active loop's buttons follow.
     pub blink: bool,
+    /// The loop point the jog moves: 0 none, 1 the in point, 2 the out point.
+    pub loop_adjust: u8,
     /// The channel's level before its fader, 0 to 127.
     pub level: u8,
 }

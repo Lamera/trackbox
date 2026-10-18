@@ -564,6 +564,7 @@ pub fn run() {
             commands::set_cue_routing,
             commands::controller_leds,
             commands::controller_status,
+            commands::set_jog_vinyl,
             commands::set_eq_curve,
             commands::deck_state,
             commands::preview_play,
@@ -696,6 +697,7 @@ pub fn run() {
                 if matches!(event, tauri::RunEvent::Exit) {
                     crate::screen_cache::save(handle);
                     crate::update::on_exit(handle);
+                    handle.state::<Arc<crate::controller::Controller>>().shutdown();
                 }
             });
         }

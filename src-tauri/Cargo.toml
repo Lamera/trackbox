@@ -96,6 +96,8 @@ objc2-foundation = { version = "0.3", default-features = false, features = [
   "std", "NSAppleEventDescriptor", "NSArray", "NSClassDescription", "NSDictionary", "NSEnumerator", "NSObjCRuntime", "NSScriptClassDescription",
   "NSScriptCommand", "NSScriptCommandDescription", "NSScriptObjectSpecifiers", "NSScriptStandardSuiteCommands",
   "NSString", "NSURL", "NSValue",
+  # `controller.rs`: App Nap held off while a DJ controller is connected.
+  "NSProcessInfo",
 ] }
 
 [target.'cfg(windows)'.dependencies]

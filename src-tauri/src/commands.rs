@@ -2674,6 +2674,13 @@ pub async fn controller_status(
     Ok(controller.status())
 }
 
+/// Vinyl: a touched jog platter scratches. Off (CDJ), it only bends.
+#[tauri::command]
+pub async fn set_jog_vinyl(controller: State<'_, Arc<crate::controller::Controller>>, on: bool) -> AppResult<()> {
+    controller.set_jog_vinyl(on);
+    Ok(())
+}
+
 /// EQ or ISOLATOR, which is what the bottom of each band's travel means.
 #[tauri::command]
 pub async fn set_eq_curve<R: tauri::Runtime>(
