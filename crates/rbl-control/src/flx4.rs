@@ -37,18 +37,25 @@ const HOT_CUE_MODE: u8 = 0x1B;
 const PAD_MODES: [u8; 8] = [0x1B, 0x69, 0x1E, 0x6B, 0x20, 0x6D, 0x22, 0x6F];
 
 /// The decoder: the MSB half of each 14-bit control until its LSB arrives,
-/// the last value each one reported, the running status, and the pad mode
-/// button last pressed on each deck.
+/// the last value each one reported, the running status, the pad mode
+/// button last pressed on each deck, and the pads held down.
 pub struct Flx4 {
     msb: [[u8; 32]; 16],
     last: [[u16; 32]; 16],
     running: u8,
     pad_modes: [u8; 2],
+    held: [[bool; 8]; 2],
 }
 
 impl Default for Flx4 {
     fn default() -> Self {
-        Self { msb: [[0; 32]; 16], last: [[NO_VALUE; 32]; 16], running: 0, pad_modes: [HOT_CUE_MODE; 2] }
+        Self {
+            msb: [[0; 32]; 16],
+            last: [[NO_VALUE; 32]; 16],
+            running: 0,
+            pad_modes: [HOT_CUE_MODE; 2],
+            held: [[false; 8]; 2],
+        }
     }
 }
 
@@ -80,6 +87,12 @@ impl Flx4 {
     #[must_use]
     pub fn pad_mode(&self, deck: Deck) -> u8 {
         self.pad_modes.get(deck.index()).copied().unwrap_or(HOT_CUE_MODE)
+    }
+
+    /// The pads held down on `deck`, either SHIFT layer.
+    #[must_use]
+    pub fn held_pads(&self, deck: Deck) -> [bool; 8] {
+        self.held.get(deck.index()).copied().unwrap_or_default()
     }
 
     /// One MIDI message in, at most one intent out. `SysEx` and anything this
@@ -160,6 +173,9 @@ impl Flx4 {
                 0x47 if pressed => Some(Intent::Load { deck: Deck::B }),
                 // [OBS] MASTER CUE is a note to the software, not a switch in the hardware.
                 0x63 if pressed => Some(Intent::MasterCue),
+                // [OBS] SMART CFX: 7F pressed, 00 released.
+                0x00 if pressed => Some(Intent::SmartCfx),
+                // [OBS] SMART FADER (0x01) is not supported: it decodes to nothing.
                 _ => None,
             },
             7..=10 => {
@@ -168,6 +184,9 @@ impl Flx4 {
                 let pad = note & 0x0F;
                 if pad > 7 {
                     return None;
+                }
+                if let Some(slot) = self.held.get_mut(deck.index()).and_then(|h| h.get_mut(usize::from(pad))) {
+                    *slot = pressed;
                 }
                 // **[VERIFY]** PAD FX1/FX2 at 0x10/0x50: not in the Mixxx mapping.
                 let mode = match note >> 4 {
@@ -310,14 +329,39 @@ pub fn leds(deck: Deck, state: &DeckLeds) -> Vec<Short> {
     if state.pad_mode != 0 {
         out.push([note, state.pad_mode, 0x7F]);
     }
-    // Both pad layers, so letting go of SHIFT does not leave them dark.
+    // Every mode's pads on both layers, the other modes' dark first and the
+    // current mode's last: the host only sends changes, so a mode left behind
+    // is put out, and if the hardware shows one light per pad, the last word
+    // is the current mode's.
+    let base = pad_base(state.pad_mode);
+    let lit = match base >> 4 {
+        0 => state.hot_cues,
+        // PAD FX 1 and 2: every pad ready, a held one dark.
+        1 | 5 => state.held_pads.map(|held| !held),
+        // BEAT JUMP, BEAT LOOP, KEY SHIFT.
+        2 | 6 | 7 => [true; 8],
+        // SAMPLER and KEYBOARD do nothing here yet.
+        _ => [false; 8],
+    };
     let pads = if deck == Deck::A { 0x97 } else { 0x99 };
     for layer in [pads, pads + 1] {
-        for (pad, set) in (0_u8..).zip(state.hot_cues.iter()) {
-            out.push([layer, pad, on(*set)]);
+        for mode in (0_u8..8).map(|m| m << 4).filter(|m| *m != base) {
+            out.extend((0_u8..8).map(|pad| [layer, mode | pad, 0]));
+        }
+    }
+    for layer in [pads, pads + 1] {
+        for (pad, set) in (0_u8..).zip(lit) {
+            out.push([layer, base | pad, on(set)]);
         }
     }
     out
+}
+
+/// The pads' data byte for a pad mode button: the mode in the high nibble, as
+/// the pads report it. The buttons alternate plain and SHIFT, and SHIFT is
+/// four modes on. No button is HOT CUE.
+fn pad_base(button: u8) -> u8 {
+    (0_u8..).zip(PAD_MODES).find(|(_, b)| *b == button).map_or(0, |(i, _)| ((i / 2) + 4 * (i % 2)) << 4)
 }
 
 /// The BEAT FX ON/OFF LED, on both lever positions and both layers.
@@ -332,6 +376,13 @@ pub fn master_cue_led(lit: bool) -> Short {
     [0x96, 0x63, on(lit)]
 }
 
+/// The SMART CFX LED. **[ASSUME]** at the button's own note, as MASTER CUE's
+/// is; the device has not been seen to light from it yet.
+#[must_use]
+pub fn smart_cfx_led(lit: bool) -> Short {
+    [0x96, 0x00, on(lit)]
+}
+
 /// Every LED this profile lights, put out: for a disconnect and for quitting,
 /// so the hardware is not left showing a deck that is gone.
 #[must_use]
@@ -339,22 +390,13 @@ pub fn all_off() -> Vec<Short> {
     let mut out = Vec::new();
     for deck in Deck::ALL {
         let note = 0x90 | u8::from(deck == Deck::B);
-        // Pads are added below in every mode, not only the hot cues `leds` covers.
-        out.extend(
-            leds(deck, &DeckLeds::default())
-                .into_iter()
-                .filter(|[status, ..]| !(0x97..=0x9A).contains(status))
-                .map(|[status, data, _]| [status, data, 0]),
-        );
+        // `leds` already covers every pad of every mode.
+        out.extend(leds(deck, &DeckLeds::default()).into_iter().map(|[status, data, _]| [status, data, 0]));
         out.extend(PAD_MODES.map(|mode| [note, mode, 0]));
-    }
-    for layer in 0x97..=0x9A {
-        for mode in 0_u8..8 {
-            out.extend((0_u8..8).map(|pad| [layer, (mode << 4) | pad, 0]));
-        }
     }
     out.extend(fx_leds(false));
     out.push(master_cue_led(false));
+    out.push(smart_cfx_led(false));
     out
 }
 
@@ -563,7 +605,7 @@ mod tests {
         assert_eq!(unique.len(), off.len(), "no LED twice");
         let lit = DeckLeds {
             play: true, cue: true, sync: true, looping: true, channel_cue: true, hot_cues: [true; 8], pad_mode: 0x6F,
-            blink: true, level: 127, loop_adjust: 0,
+            held_pads: [false; 8], blink: true, level: 127, loop_adjust: 0,
         };
         for deck in Deck::ALL {
             for [status, data, _] in leds(deck, &lit) {
@@ -574,6 +616,7 @@ mod tests {
             assert!(off.contains(&[status, data, 0]));
         }
         assert!(off.contains(&[0x96, 0x63, 0]));
+        assert!(off.contains(&[0x96, 0x00, 0]), "SMART CFX");
         assert!(off.contains(&[0x9A, 0x77, 0]), "the last pad of the last mode on deck 2 with SHIFT");
         assert!(off.contains(&[0x90, 0x1B, 0]) && off.contains(&[0x91, 0x6F, 0]), "pad mode buttons");
         assert!(off.contains(&[0xB1, 0x02, 0]), "the channel meter");
@@ -583,6 +626,88 @@ mod tests {
     fn track_loaded_names_the_deck() {
         assert_eq!(track_loaded(Deck::A), [0x9F, 0x00, 0x7F]);
         assert_eq!(track_loaded(Deck::B), [0x9F, 0x01, 0x7F]);
+    }
+
+    #[test]
+    fn smart_cfx_toggles_on_the_press_and_smart_fader_does_nothing() {
+        let mut flx = Flx4::new();
+        assert_eq!(flx.decode(&[0x96, 0x00, 0x7F]), Some(Intent::SmartCfx));
+        assert_eq!(flx.decode(&[0x96, 0x00, 0x00]), None);
+        assert_eq!(flx.decode(&[0x96, 0x01, 0x7F]), None);
+        assert_eq!(flx.decode(&[0x96, 0x01, 0x00]), None);
+        assert!(Intent::SmartCfx.is_direct());
+        assert_eq!(serde_json::to_string(&Intent::SmartCfx).unwrap(), r#"{"type":"smartCfx"}"#);
+        assert_eq!(smart_cfx_led(true), [0x96, 0x00, 0x7F]);
+    }
+
+    #[test]
+    fn held_pads_are_tracked_per_deck_on_either_layer() {
+        let mut flx = Flx4::new();
+        assert!(flx.decode(&[0x98, 0x13, 0x7F]).is_some());
+        assert!(flx.decode(&[0x99, 0x55, 0x7F]).is_some());
+        assert_eq!(flx.held_pads(Deck::A), [false, false, false, true, false, false, false, false]);
+        assert_eq!(flx.held_pads(Deck::B), [false, false, false, false, false, true, false, false]);
+        assert!(flx.decode(&[0x98, 0x13, 0x00]).is_some());
+        assert_eq!(flx.held_pads(Deck::A), [false; 8]);
+    }
+
+    /// The pads' messages of one layer of `deck` in the current mode.
+    fn pads_shown(deck: Deck, state: &DeckLeds, base: u8) -> Vec<u8> {
+        let layer = if deck == Deck::A { 0x97 } else { 0x99 };
+        let out = leds(deck, state);
+        (0_u8..8).map(|pad| out.iter().rev().find(|m| m[0] == layer && m[1] == base | pad).unwrap()[2]).collect()
+    }
+
+    #[test]
+    fn the_pads_follow_the_pad_mode() {
+        let state = |pad_mode| DeckLeds {
+            pad_mode,
+            hot_cues: [true, false, false, false, false, false, false, false],
+            held_pads: [false, false, true, false, false, false, false, false],
+            ..DeckLeds::default()
+        };
+        let lit = vec![0x7F; 8];
+        let dark = vec![0x00; 8];
+        let mut fx = lit.clone();
+        fx[2] = 0;
+        let mut cues = dark.clone();
+        cues[0] = 0x7F;
+        for (button, base, expected) in [
+            (0x1B, 0x00, cues),
+            (0x1E, 0x10, fx.clone()),
+            (0x20, 0x20, lit.clone()),
+            (0x22, 0x30, dark.clone()),
+            (0x69, 0x40, dark.clone()),
+            (0x6B, 0x50, fx),
+            (0x6D, 0x60, lit.clone()),
+            (0x6F, 0x70, lit),
+        ] {
+            assert_eq!(pads_shown(Deck::A, &state(button), base), expected, "mode button {button:#x}");
+            let out = leds(Deck::B, &state(button));
+            // The SHIFT layer shows the same.
+            assert!(out.contains(&[0x9A, base | 7, expected[7]]));
+            // Every pad of every mode, once a layer.
+            assert_eq!(out.iter().filter(|m| m[0] == 0x99).count(), 64);
+            let last = out.iter().rposition(|m| m[0] == 0x9A && m[1] >> 4 != base >> 4).unwrap();
+            let current = out.iter().position(|m| m[0] == 0x99 && m[1] & 0xF0 == base).unwrap();
+            assert!(last < current, "the other modes are put out before the current one is shown");
+        }
+    }
+
+    #[test]
+    fn a_mode_change_puts_out_the_pads_it_leaves() {
+        // What the host's diff sends: only what changed since the last pass.
+        let mut sent = std::collections::HashMap::new();
+        let mut changes = |messages: Vec<Short>| {
+            messages.into_iter().filter(|[s, d, v]| sent.insert((*s, *d), *v) != Some(*v)).collect::<Vec<_>>()
+        };
+        let hot = DeckLeds { pad_mode: 0x1B, hot_cues: [true; 8], ..DeckLeds::default() };
+        changes(leds(Deck::A, &hot));
+        let diff = changes(leds(Deck::A, &DeckLeds { pad_mode: 0x20, ..hot }));
+        for pad in 0_u8..8 {
+            assert!(diff.contains(&[0x97, pad, 0]), "hot cue pad {pad} stayed lit");
+            assert!(diff.contains(&[0x98, 0x20 | pad, 0x7F]), "beat jump pad {pad} was not lit");
+        }
     }
 
     #[test]

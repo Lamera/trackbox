@@ -62,6 +62,12 @@ describe("sanitisePreferences", () => {
     expect(sanitisePreferences({ audio: { jogVinyl: false } }).audio.jogVinyl).toBe(false);
   });
 
+  it("keeps a known SMART CFX kind and falls back to echo", () => {
+    expect(DEFAULT_PREFERENCES.audio.smartCfxKind).toBe("echo");
+    expect(sanitisePreferences({ audio: { smartCfxKind: "noise" } }).audio.smartCfxKind).toBe("noise");
+    expect(sanitisePreferences({ audio: { smartCfxKind: "flanger" } }).audio.smartCfxKind).toBe("echo");
+  });
+
   it("keeps the browser key-sort choice and preserves the old display-based ordering", () => {
     expect(sanitisePreferences({view: {keySort: "musical"}}).view.keySort).toBe("musical");
     expect(sanitisePreferences({view: {keySort: "invalid"}}).view.keySort).toBe("alphabetical");

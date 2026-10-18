@@ -122,14 +122,14 @@ impl FxSettings {
 
 /// A stereo delay line with feedback, read between samples so a change of
 /// time glides rather than clicks.
-struct Echo {
+pub(crate) struct Echo {
     line: Vec<f32>,
     write: usize,
     delay: Smoothed,
 }
 
 impl Echo {
-    fn new(rate: u32) -> Self {
+    pub(crate) fn new(rate: u32) -> Self {
         let frames = (MAX_DELAY_SECONDS * rate as f32) as usize + 2;
         Self { line: vec![0.0; frames * 2], write: 0, delay: Smoothed::new(rate as f32 / 2.0, rate) }
     }
@@ -152,7 +152,7 @@ impl Echo {
     }
 
     /// One frame: what comes back, after feeding in `input`.
-    fn run(&mut self, input: (f32, f32), delay_frames: f32, feedback: f32) -> (f32, f32) {
+    pub(crate) fn run(&mut self, input: (f32, f32), delay_frames: f32, feedback: f32) -> (f32, f32) {
         let back = self.delay.step(delay_frames);
         let out = self.tap(back);
         let frames = self.frames();
@@ -221,13 +221,13 @@ const SPREAD: usize = 23;
 const REVERB_IN: f32 = 0.015;
 const REVERB_WET: f32 = 3.0;
 
-struct Reverb {
+pub(crate) struct Reverb {
     combs: [Vec<Comb>; 2],
     allpasses: [Vec<Allpass>; 2],
 }
 
 impl Reverb {
-    fn new(rate: u32) -> Self {
+    pub(crate) fn new(rate: u32) -> Self {
         let scale = |n: usize| (n as f32 * rate as f32 / 44_100.0) as usize;
         let side = |spread: usize| {
             (
@@ -240,7 +240,7 @@ impl Reverb {
         Self { combs: [left_c, right_c], allpasses: [left_a, right_a] }
     }
 
-    fn run(&mut self, input: (f32, f32), room: f32) -> (f32, f32) {
+    pub(crate) fn run(&mut self, input: (f32, f32), room: f32) -> (f32, f32) {
         // Mono in, as Freeverb takes it; the two sides differ by their tunings.
         let mono = (input.0 + input.1) * REVERB_IN;
         let mut out = [0.0_f32; 2];

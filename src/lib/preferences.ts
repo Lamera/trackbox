@@ -14,7 +14,7 @@ import { ANALYSIS_SLOTS, SLOTS } from "./queue";
 import type { KeyChord } from "./shortcuts";
 import { fromCamelot, toCamelot, type TrafficLightReach } from "./camelot";
 import type {
-  KeyDisplay, MenuSlot, OverviewWaveform, WaveformColor, WaveformPosition,
+  KeyDisplay, MenuSlot, OverviewWaveform, SmartCfxKind, WaveformColor, WaveformPosition,
 } from "@/ipc/types";
 
 /** BEAT SYNC matches the tempo and the bar; BPM SYNC the tempo alone. */
@@ -172,12 +172,15 @@ export interface AudioPreferences {
   crossfader: boolean;
   /** A controller's jog platter scratches when touched (vinyl); off, it only bends (CDJ). */
   jogVinyl: boolean;
+  /** What SMART CFX adds to the filter on the CFX knobs; on/off is per session. */
+  smartCfxKind: SmartCfxKind;
   /** Where mix recordings go; null is Music › Trackbox Recordings. */
   recordingFolder: string | null;
 }
 
 export type HeadphoneRouting = "auto" | "off" | "split" | "lanes";
 export const HEADPHONE_ROUTINGS: readonly HeadphoneRouting[] = ["auto", "off", "split", "lanes"];
+export const SMART_CFX_KINDS: readonly SmartCfxKind[] = ["echo", "reverb", "noise", "crush"];
 
 export type AnalysisMode = "rekordbox" | "rbxport";
 
@@ -325,6 +328,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
     eqCurve: "eq",
     crossfader: true,
     jogVinyl: true,
+    smartCfxKind: "echo",
     recordingFolder: null,
   },
   analysis: {
@@ -504,6 +508,7 @@ export function sanitisePreferences(value: unknown): Preferences {
       eqCurve: oneOf(audio.eqCurve, ["eq", "isolator"] as const, d.audio.eqCurve),
       crossfader: bool(audio.crossfader, d.audio.crossfader),
       jogVinyl: bool(audio.jogVinyl, d.audio.jogVinyl),
+      smartCfxKind: oneOf(audio.smartCfxKind, SMART_CFX_KINDS, d.audio.smartCfxKind),
       recordingFolder:
         typeof audio.recordingFolder === "string" && audio.recordingFolder !== "" ? audio.recordingFolder : null,
     },

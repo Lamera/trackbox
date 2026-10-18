@@ -42,6 +42,7 @@ mod limiter;
 mod metronome;
 mod meter;
 mod mixer;
+mod padfx;
 mod record;
 pub use record::{RecordingStatus, RECORD_SECONDS_BUFFERED};
 #[cfg(feature = "rubberband")]
@@ -77,6 +78,7 @@ pub use limiter::{
 pub use metronome::{ClickSound, ClickVolume, GridBeat, Metronome, MetronomeSettings};
 pub use fx::{BeatFx, FxKind, FxSettings, FxTarget};
 pub use mixer::{Band, Channel, ChannelSettings, Curve, Fade, MixerSettings};
+pub use padfx::{PadFxKind, SmartCfxKind};
 #[cfg(feature = "rubberband")]
 pub use rubberband::RubberBand;
 pub use stretch::{Stretcher, Varispeed, Wsola, MAX_RATIO, MIN_RATIO};
@@ -399,6 +401,8 @@ impl Engine {
                 channels.get_or_insert_with(|| [Channel::new(rate), Channel::new(rate)]);
             let beat_fx = beat_fx.get_or_insert_with(|| BeatFx::new(rate));
             let curve = strip.curve();
+            let smart = strip.smart_cfx();
+            let beat_ms = effecting.beat_ms();
             let (fade_a, fade_b) = strip.fader();
             // A sink without headphones hands over an empty cue buffer, and
             // then none of the cue path runs.
@@ -428,7 +432,8 @@ impl Engine {
                     let after = reader.clock.position();
                     let fader = if i == 0 { fade_a } else { fade_b };
                     let Some(settings) = strip.channels.get(i) else { continue };
-                    channel.process_strip(buffer, settings, curve);
+                    // SMART CFX and PAD FX in the strip, so the cue hears them.
+                    channel.process_strip_with_fx(buffer, settings, curve, smart, beat_ms);
                     // The channel's level before its fader, for a controller's meter.
                     settings.report_level(buffer.iter().fold(0.0_f32, |peak, s| peak.max(s.abs())));
                     // Pre-fader listen: after trim and EQ, before the channel

@@ -15,6 +15,7 @@
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use crate::latency::{ControlLatency, LatencyMeter, Stamp};
+use crate::padfx::{smart_amount, PadFx, PadFxKind, PadSettings, SmartCfxKind, SmartFx};
 use crate::smooth::Smoothed;
 
 /// Where the low band ends and the middle begins.
@@ -113,6 +114,8 @@ pub struct ChannelSettings {
     /// The same peak, held for the interface's meter: its own slot, so the
     /// interface and a controller's LEDs never clear each other's reading.
     meter: AtomicU32,
+    /// PAD FX: held while a pad is. Not carried to a rebuilt engine.
+    pad: PadSettings,
     changed: Stamp,
 }
 
@@ -131,6 +134,7 @@ impl Default for ChannelSettings {
             filter: AtomicU32::new(0.5_f32.to_bits()),
             level: AtomicU32::new(0),
             meter: AtomicU32::new(0),
+            pad: PadSettings::default(),
             changed: Stamp::default(),
         }
     }
@@ -218,6 +222,17 @@ impl ChannelSettings {
 
     pub fn filter(&self) -> f32 {
         f32::from_bits(self.filter.load(Ordering::Relaxed))
+    }
+
+    /// A pad effect while its pad is held, `beats` long at `beat_ms` a beat;
+    /// `None` lets go and lets echo and reverb ring out.
+    pub fn set_pad_fx(&self, fx: Option<(PadFxKind, f32)>, beat_ms: f32) {
+        self.pad.set(fx, beat_ms);
+        self.changed.mark();
+    }
+
+    pub fn pad_fx(&self) -> Option<(PadFxKind, f32)> {
+        self.pad.get()
     }
 
     /// Held rather than replaced, so a peak between two reads is not lost.
@@ -312,6 +327,9 @@ pub struct MixerSettings {
     crossfader_on: AtomicBool,
     /// MASTER CUE: the master on the headphones, as if it were cued.
     master_cue: AtomicBool,
+    /// SMART CFX: the CFX knobs drive an effect along with the filter.
+    smart_on: AtomicBool,
+    smart_kind: AtomicU32,
     changed: Stamp,
     latency: LatencyMeter,
 }
@@ -329,6 +347,8 @@ impl Default for MixerSettings {
             headphone_mix: AtomicU32::new(0.0_f32.to_bits()),
             crossfader_on: AtomicBool::new(true),
             master_cue: AtomicBool::new(false),
+            smart_on: AtomicBool::new(false),
+            smart_kind: AtomicU32::new(SmartCfxKind::Echo.to_wire()),
             changed: Stamp::default(),
             latency: LatencyMeter::default(),
         }
@@ -391,6 +411,29 @@ impl MixerSettings {
         self.master_cue.load(Ordering::Relaxed)
     }
 
+    pub fn set_smart_cfx_on(&self, on: bool) {
+        self.smart_on.store(on, Ordering::Relaxed);
+        self.changed.mark();
+    }
+
+    pub fn smart_cfx_on(&self) -> bool {
+        self.smart_on.load(Ordering::Relaxed)
+    }
+
+    pub fn set_smart_cfx_kind(&self, kind: SmartCfxKind) {
+        self.smart_kind.store(kind.to_wire(), Ordering::Relaxed);
+        self.changed.mark();
+    }
+
+    pub fn smart_cfx_kind(&self) -> SmartCfxKind {
+        SmartCfxKind::from_wire(self.smart_kind.load(Ordering::Relaxed))
+    }
+
+    /// What the CFX knobs drive besides the filter, if SMART CFX is on.
+    pub(crate) fn smart_cfx(&self) -> Option<SmartCfxKind> {
+        self.smart_cfx_on().then(|| self.smart_cfx_kind())
+    }
+
     pub fn set_headphone_mix(&self, position: f32) {
         let safe = if position.is_finite() { position.clamp(0.0, 1.0) } else { 0.5 };
         self.headphone_mix.store(safe.to_bits(), Ordering::Relaxed);
@@ -440,6 +483,8 @@ impl MixerSettings {
         self.set_headphone_mix(other.headphone_mix());
         self.set_crossfader_on(other.crossfader_on());
         self.set_master_cue(other.master_cue());
+        self.set_smart_cfx_on(other.smart_cfx_on());
+        self.set_smart_cfx_kind(other.smart_cfx_kind());
     }
 
     /// What the cue sum and the master are multiplied by on the headphones.
@@ -609,7 +654,7 @@ const FILTER_K: f32 = 1.1;
 /// A state-variable filter, in the trapezoidal (TPT) form that stays stable
 /// while its cutoff is swept every frame.
 #[derive(Debug, Clone, Copy, Default)]
-struct Svf {
+pub(crate) struct Svf {
     ic1: f32,
     ic2: f32,
 }
@@ -617,7 +662,7 @@ struct Svf {
 impl Svf {
     /// The low-pass and high-pass outputs for one sample; `g` is
     /// `tan(pi * cutoff / rate)`.
-    fn run(&mut self, x: f32, g: f32) -> (f32, f32) {
+    pub(crate) fn run(&mut self, x: f32, g: f32) -> (f32, f32) {
         let a1 = 1.0 / (1.0 + g * (g + FILTER_K));
         let a2 = g * a1;
         let a3 = g * a2;
@@ -633,7 +678,7 @@ impl Svf {
 /// The CFX knob at `at` as a cutoff, whether it is a high pass, and how much
 /// of the filtered signal is heard. Left sweeps a low pass from 20 kHz down to
 /// 40 Hz, right a high pass from 20 Hz up to 12 kHz.
-fn filter_shape(at: f32) -> (f32, bool, f32) {
+pub(crate) fn filter_shape(at: f32) -> (f32, bool, f32) {
     let from_centre = (at.clamp(0.0, 1.0) - 0.5) * 2.0;
     let wet = ((from_centre.abs() - FILTER_DEAD) / FILTER_FADE).clamp(0.0, 1.0);
     if from_centre < 0.0 {
@@ -655,6 +700,8 @@ pub struct Channel {
     filters: [Svf; 2],
     filter_at: Smoothed,
     rate: f32,
+    smart: SmartFx,
+    pad: PadFx,
 }
 
 impl Channel {
@@ -673,6 +720,8 @@ impl Channel {
             filters: [Svf::default(); 2],
             filter_at: Smoothed::new(0.5, rate),
             rate: rate.max(1) as f32,
+            smart: SmartFx::new(rate),
+            pad: PadFx::new(rate),
         }
     }
 
@@ -688,12 +737,35 @@ impl Channel {
     /// Trim, the three bands and CFX: everything before the fader, which is
     /// where the headphones listen.
     pub fn process_strip(&mut self, out: &mut [f32], settings: &ChannelSettings, curve: Curve) {
+        self.strip(out, settings, curve, None, 0.0);
+    }
+
+    /// The strip with SMART CFX (`smart`, timed to the BEAT FX beat) and the
+    /// channel's PAD FX after it: what the engine runs before the fader.
+    pub fn process_strip_with_fx(
+        &mut self,
+        out: &mut [f32],
+        settings: &ChannelSettings,
+        curve: Curve,
+        smart: Option<SmartCfxKind>,
+        beat_ms: f32,
+    ) {
+        self.strip(out, settings, curve, smart, beat_ms);
+        self.pad.process(out, settings.pad.read());
+    }
+
+    fn strip(&mut self, out: &mut [f32], settings: &ChannelSettings, curve: Curve, smart: Option<SmartCfxKind>, beat_ms: f32) {
         let wanted = settings.wanted(curve);
         let trim = settings.trim();
         let filter = settings.filter();
+        let beat_frames = beat_ms * self.rate / 1000.0;
         for frame in out.chunks_exact_mut(2) {
             let trim = self.trim.step(trim);
-            let (hz, high_pass, wet) = filter_shape(self.filter_at.step(filter));
+            let at = self.filter_at.step(filter);
+            let (hz, high_pass, wet) = filter_shape(at);
+            let amount = smart_amount(at, FILTER_DEAD);
+            let shares = self.smart.shares(smart);
+            let noise = if amount > 0.0 { self.smart.noise(amount, shares) } else { None };
             let g = if wet > 0.0 {
                 (std::f32::consts::PI * (hz / self.rate).min(0.45)).tan()
             } else {
@@ -713,6 +785,10 @@ impl Channel {
                 for (band, gain) in split.iter().zip(gains.iter()) {
                     sum += band * gain;
                 }
+                // SMART CFX NOISE goes in before the filter, which shapes it.
+                if let Some(add) = noise.as_ref().and_then(|n| n.get(side)) {
+                    sum += add;
+                }
                 if wet > 0.0 {
                     if let Some(svf) = self.filters.get_mut(side) {
                         let (low, high) = svf.run(sum, g);
@@ -722,6 +798,7 @@ impl Channel {
                 }
                 *sample = sum;
             }
+            self.smart.after_filter(frame, amount, wet, shares, beat_frames);
         }
     }
 
@@ -1024,6 +1101,9 @@ mod tests {
         old.channels[0].set_kill(Band::Mid, true);
         old.set_crossfade(0.1);
         old.set_headphone_mix(0.7);
+        old.set_smart_cfx_on(true);
+        old.set_smart_cfx_kind(SmartCfxKind::Noise);
+        old.channels[0].set_pad_fx(Some((PadFxKind::Roll, 1.0)), 500.0);
         let fresh = MixerSettings::default();
         fresh.copy_from(&old);
         assert_eq!(fresh.channels[1].volume(), 0.3);
@@ -1032,6 +1112,9 @@ mod tests {
         assert!(fresh.channels[0].killed(Band::Mid));
         assert_eq!(fresh.crossfade(), 0.1);
         assert_eq!(fresh.headphone_mix(), 0.7);
+        assert!(fresh.smart_cfx_on());
+        assert_eq!(fresh.smart_cfx_kind(), SmartCfxKind::Noise);
+        assert_eq!(fresh.channels[0].pad_fx(), None, "a held pad is not carried to a new engine");
     }
 
     #[test]

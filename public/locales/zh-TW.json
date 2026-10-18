@@ -1749,5 +1749,15 @@
   "Recording needs the desktop app's audio engine.": "Recording needs the desktop app's audio engine.",
   "The recording could not be started.": "The recording could not be started.",
   "The recordings folder could not be created.": "The recordings folder could not be created.",
-  "There is no folder to record into. Choose one in Preferences › Audio.": "There is no folder to record into. Choose one in Preferences › Audio."
+  "There is no folder to record into. Choose one in Preferences › Audio.": "There is no folder to record into. Choose one in Preferences › Audio.",
+  "CRUSH": "CRUSH",
+  "NOISE": "NOISE",
+  "SMART CFX": "SMART CFX",
+  "SMART CFX could not reach the audio engine.": "SMART CFX could not reach the audio engine.",
+  "Smart CFX effect": "Smart CFX effect",
+  "Smart CFX: low pass + crush ← → high pass + crush": "Smart CFX: low pass + crush ← → high pass + crush",
+  "Smart CFX: low pass + echo ← → high pass + echo": "Smart CFX: low pass + echo ← → high pass + echo",
+  "Smart CFX: low pass + noise ← → high pass + noise": "Smart CFX: low pass + noise ← → high pass + noise",
+  "Smart CFX: low pass + reverb ← → high pass + reverb": "Smart CFX: low pass + reverb ← → high pass + reverb",
+  "Smart CFX: the CFX knobs add the chosen effect to the filter": "Smart CFX: the CFX knobs add the chosen effect to the filter"
 }

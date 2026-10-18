@@ -26,19 +26,26 @@ the user guide is [DDJ-FLX4 controller](../../docs/user/controller-ddj-flx4.md).
 `Flx4::decode` takes one MIDI message and returns at most one `Intent`. It
 keeps the state the protocol needs: running status, the MSB half of each
 14-bit control until its LSB arrives, the last value of each control (a
-repeated value is dropped), and the pad mode button last pressed per deck.
-SysEx and unmapped messages return `None`.
+repeated value is dropped), the pad mode button last pressed per deck, and
+the pads held per deck (PAD FX is momentary, so pad releases are intents
+too). SysEx and unmapped messages return `None`.
 
 `Intent::is_direct` marks the continuous mixer controls (trim, EQ, filter,
-channel fader, crossfader, headphone mix, MASTER CUE). The host applies
-those to the engine at once; everything else, apart from jog bends, goes to
-the interface as `controller:intent`.
+channel fader, crossfader, headphone mix, MASTER CUE, SMART CFX). The host
+applies those to the engine at once and emits `mixer:smart-cfx` for SMART
+CFX; everything else, apart from jog bends, goes to the interface as
+`controller:intent`. The 4BEAT/EXIT button keeps its Mixxx wire name
+`reloop`.
 
-`flx4::leds` returns every LED message for one deck. The host remembers what
-it sent and only sends changes, clearing that memory at each keepalive
-because the hardware drops LEDs around it [OBS]. `all_off` puts out every LED
-the profile lights, for disconnect and quit. `track_loaded` starts the jog
-ring's load animation.
+`flx4::leds` returns every LED message for one deck. Pads are written at the
+current pad mode's base (`mode << 4 | pad`): hot cues in HOT CUE, all lit in
+PAD FX (a held pad dark), BEAT JUMP, BEAT LOOP and KEY SHIFT, dark in SAMPLER
+and KEYBOARD; the other modes' pads are sent dark so a mode change clears
+them. The host remembers what it sent and only sends changes; at each
+keepalive it forgets the lit ones, because the hardware drops LEDs around it
+[OBS], and keeps the dark ones dark without resending. `all_off` puts out
+every LED the profile lights, for disconnect and quit. `track_loaded` starts
+the jog ring's load animation.
 
 ## Threading and real-time notes
 
@@ -66,7 +73,9 @@ this crate's:
   (GPL-2.0-or-later); no code is copied.
 - **[OBS]**: observed on a real unit with `midi-capture`.
 - **[VERIFY]**: not yet confirmed on hardware, such as the exact port name on
-  each OS and the PAD FX note ranges.
+  each OS, the PAD FX note ranges and the SMART CFX LED address. SMART CFX
+  (`96 00`) and SMART FADER (`96 01`) presses are [OBS]; SMART FADER is not
+  supported.
 
 Observed and worth knowing before changing anything:
 

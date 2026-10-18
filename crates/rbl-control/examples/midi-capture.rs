@@ -70,6 +70,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         channel_cue: true,
         hot_cues: [true; 8],
         pad_mode: 0x1B,
+        held_pads: [false; 8],
         blink: true,
         level: 127,
         loop_adjust: 0,

@@ -26,7 +26,7 @@ use std::path::Path;
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use rbl_deck::{Deck, DeckEvent, Engine, Render, Sink};
+use rbl_deck::{Deck, DeckEvent, Engine, PadFxKind, Render, Sink, SmartCfxKind};
 
 const RATE: u32 = 44_100;
 const BUFFER: usize = 512;
@@ -187,10 +187,26 @@ fn the_audio_callback_allocates_nothing() {
     }
 
     // And then it must never allocate again, whatever the transport does.
+    let mixer = engine.mixer();
+    let pad = |kind| mixer.channels[0].set_pad_fx(Some((kind, 1.0)), 100.0);
     let mut worst = 0;
     for i in 0..200 {
         match i {
             40 => engine.seek_frames(Deck::A, u64::from(RATE) * 2),
+            // PAD FX, one after another and let go, and SMART CFX through its kinds.
+            50 => pad(PadFxKind::Roll),
+            53 => pad(PadFxKind::Echo),
+            56 => pad(PadFxKind::Trans),
+            59 => pad(PadFxKind::Hpf),
+            62 => pad(PadFxKind::Lpf),
+            65 => pad(PadFxKind::Crush),
+            68 => pad(PadFxKind::Reverb),
+            71 => mixer.channels[0].set_pad_fx(None, 100.0),
+            72 => mixer.set_smart_cfx_on(true),
+            73 => mixer.channels[0].set_filter(0.9),
+            75 => mixer.set_smart_cfx_kind(SmartCfxKind::Noise),
+            77 => mixer.set_smart_cfx_kind(SmartCfxKind::Crush),
+            79 => mixer.set_smart_cfx_kind(SmartCfxKind::Reverb),
             80 => engine.pause(Deck::A),
             100 => engine.play(Deck::A),
             140 => engine.master().set_gain(0.3),

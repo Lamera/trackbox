@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { DEFAULT_PREFERENCES } from "@/lib/preferences";
-import type { BeatFxSettings, ControllerIntent, Meters, RecordingStatus } from "@/ipc/types";
+import type { BeatFxSettings, ControllerIntent, Meters, RecordingStatus, SmartCfxKind, SmartCfxState } from "@/ipc/types";
 import { PreferencesProvider } from "@/store/usePreferences";
 import { MixerStrip, recordingClock } from "./MixerStrip";
 
@@ -19,6 +19,9 @@ const setChannelFilter = vi.fn(() => Promise.resolve());
 const setHeadphoneMix = vi.fn(() => Promise.resolve());
 const setCrossfaderOn = vi.fn(() => Promise.resolve());
 const setBeatFx = vi.fn((_fx: BeatFxSettings) => Promise.resolve());
+const setSmartCfxOn = vi.fn((_on: boolean) => Promise.resolve());
+const setSmartCfxKind = vi.fn((_kind: SmartCfxKind) => Promise.resolve());
+const smartCfxListeners = new Set<(state: SmartCfxState) => void>();
 const update = vi.fn();
 const intents = new Set<(intent: ControllerIntent) => void>();
 const statuses = new Set<(status: { name: string | null }) => void>();
@@ -37,7 +40,12 @@ vi.mock("@/ipc/client", () => ({
       return () => recordListeners.delete(listener);
     },
     setChannelKill, setChannelBand, setChannelVolume, setEqCurve, setChannelCue, setChannelFilter, setHeadphoneMix,
-    setCrossfaderOn, setBeatFx,
+    setCrossfaderOn, setBeatFx, setSmartCfxOn, setSmartCfxKind,
+    smartCfxState: () => Promise.resolve({ on: false, kind: "echo" }),
+    onSmartCfx: (listener: (state: SmartCfxState) => void) => {
+      smartCfxListeners.add(listener);
+      return () => smartCfxListeners.delete(listener);
+    },
     setChannelTrim: () => Promise.resolve(), setCrossfade: () => Promise.resolve(), setJogVinyl: () => Promise.resolve(),
     onControllerIntent: (listener: (intent: ControllerIntent) => void) => {
       intents.add(listener);
@@ -91,6 +99,8 @@ beforeEach(() => {
   setHeadphoneMix.mockClear();
   setCrossfaderOn.mockClear();
   setBeatFx.mockClear();
+  setSmartCfxOn.mockClear();
+  setSmartCfxKind.mockClear();
   update.mockClear();
 });
 afterEach(() => { act(() => root.unmount()); host.remove(); });
@@ -238,8 +248,9 @@ it("times BEAT FX to the beat and follows the controller's FX section", async ()
   expect(setBeatFx.mock.lastCall?.[0].on).toBe(false);
 });
 
-it("keeps the measured EXPORT mixer compact and without PERFORMANCE-only controls", () => {
+it("keeps the measured EXPORT mixer compact and without PERFORMANCE-only controls", async () => {
   mount({});
+  await act(async () => {});
   expect(host.querySelector('[data-performance]')).toBeNull();
   expect(host.querySelector('[aria-label="Deck A channel volume"]')).toBeNull();
   expect(host.querySelector('[aria-label="Deck B LOW EQ"]')).toBeNull();
@@ -285,6 +296,36 @@ it("follows a controller's knobs and toggles CUE from its button", async () => {
   expect(setChannelCue).toHaveBeenCalledWith("a", true);
   // The engine already has the knob positions; the strip does not send them back.
   expect(setChannelVolume).not.toHaveBeenCalled();
+});
+
+it("sends the remembered SMART CFX effect, toggles it and follows the controller's button", async () => {
+  mount({}, true, { smartCfxKind: "noise" });
+  await act(async () => {});
+  expect(setSmartCfxKind).toHaveBeenCalledWith("noise");
+  const smart = () => [...host.querySelectorAll("button")].find((b) => b.textContent === "SMART CFX");
+  const filterTitle = () => host.querySelector('[aria-label="Deck A filter"]')?.getAttribute("title");
+  expect(smart()?.getAttribute("aria-pressed")).toBe("false");
+  expect(filterTitle()).toContain("Left: low pass");
+
+  act(() => smart()?.click());
+  await act(async () => {});
+  expect(setSmartCfxOn).toHaveBeenCalledWith(true);
+  expect(smart()?.getAttribute("aria-pressed")).toBe("true");
+  expect(filterTitle()).toBe("Smart CFX: low pass + noise ← → high pass + noise");
+
+  const effect = host.querySelector<HTMLSelectElement>('select[aria-label="Smart CFX effect"]');
+  expect(effect?.value).toBe("noise");
+  act(() => {
+    if (!effect) return;
+    effect.value = "crush";
+    effect.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  expect(update).toHaveBeenCalledWith("audio", { smartCfxKind: "crush" });
+
+  // The FLX4's SMART CFX button, reported by the engine.
+  act(() => { for (const listener of smartCfxListeners) listener({ on: false, kind: "noise" }); });
+  expect(smart()?.getAttribute("aria-pressed")).toBe("false");
+  expect(filterTitle()).toContain("Left: low pass");
 });
 
 it("shows a connected controller in the mixer header", async () => {

@@ -2654,6 +2654,127 @@ pub async fn set_beat_fx<R: tauri::Runtime>(
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PadFxKindDto {
+    Echo,
+    Reverb,
+    Trans,
+    Roll,
+    Hpf,
+    Lpf,
+    Crush,
+}
+
+/// One pad effect: `beats` is its length, sweep time or reverb size.
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+pub struct PadFxDto {
+    pub kind: PadFxKindDto,
+    pub beats: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SmartCfxKindDto {
+    Echo,
+    Reverb,
+    Noise,
+    Crush,
+}
+
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+pub struct SmartCfxState {
+    pub on: bool,
+    pub kind: SmartCfxKindDto,
+}
+
+pub fn smart_cfx_of(mixer: &rbl_deck::MixerSettings) -> SmartCfxState {
+    use rbl_deck::SmartCfxKind as K;
+    let kind = match mixer.smart_cfx_kind() {
+        K::Echo => SmartCfxKindDto::Echo,
+        K::Reverb => SmartCfxKindDto::Reverb,
+        K::Noise => SmartCfxKindDto::Noise,
+        K::Crush => SmartCfxKindDto::Crush,
+    };
+    SmartCfxState { on: mixer.smart_cfx_on(), kind }
+}
+
+/// `mixer:smart-cfx`, after every change from either side.
+pub fn emit_smart_cfx<R: tauri::Runtime>(app: &tauri::AppHandle<R>, mixer: &rbl_deck::MixerSettings) {
+    if let Err(e) = tauri::Emitter::emit(app, "mixer:smart-cfx", smart_cfx_of(mixer)) {
+        tracing::warn!(error = %e, "SMART CFX did not reach the interface");
+    }
+}
+
+/// A pad effect on one deck while its pad is held; `None` lets it go.
+#[tauri::command]
+pub async fn set_pad_fx<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    player: State<'_, Arc<crate::player::Player>>,
+    deck: String,
+    fx: Option<PadFxDto>,
+    beat_ms: f32,
+) -> AppResult<()> {
+    use rbl_deck::PadFxKind as K;
+    let engine = player.engine(&app)?;
+    let fx = fx.map(|fx| {
+        let kind = match fx.kind {
+            PadFxKindDto::Echo => K::Echo,
+            PadFxKindDto::Reverb => K::Reverb,
+            PadFxKindDto::Trans => K::Trans,
+            PadFxKindDto::Roll => K::Roll,
+            PadFxKindDto::Hpf => K::Hpf,
+            PadFxKindDto::Lpf => K::Lpf,
+            PadFxKindDto::Crush => K::Crush,
+        };
+        (kind, fx.beats)
+    });
+    if let Some(channel) = engine.mixer().channels.get(channel_of(&deck)) {
+        channel.set_pad_fx(fx, beat_ms);
+    }
+    Ok(())
+}
+
+/// SMART CFX on or off: the CFX knobs drive an effect along with the filter.
+#[tauri::command]
+pub async fn set_smart_cfx_on<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    player: State<'_, Arc<crate::player::Player>>,
+    on: bool,
+) -> AppResult<()> {
+    let engine = player.engine(&app)?;
+    engine.mixer().set_smart_cfx_on(on);
+    emit_smart_cfx(&app, engine.mixer());
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_smart_cfx_kind<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    player: State<'_, Arc<crate::player::Player>>,
+    kind: SmartCfxKindDto,
+) -> AppResult<()> {
+    use rbl_deck::SmartCfxKind as K;
+    let engine = player.engine(&app)?;
+    engine.mixer().set_smart_cfx_kind(match kind {
+        SmartCfxKindDto::Echo => K::Echo,
+        SmartCfxKindDto::Reverb => K::Reverb,
+        SmartCfxKindDto::Noise => K::Noise,
+        SmartCfxKindDto::Crush => K::Crush,
+    });
+    emit_smart_cfx(&app, engine.mixer());
+    Ok(())
+}
+
+/// SMART CFX as it stands, without opening the audio device to find out.
+#[tauri::command]
+pub async fn smart_cfx_state(player: State<'_, Arc<crate::player::Player>>) -> AppResult<SmartCfxState> {
+    Ok(match player.opened() {
+        Some(engine) => smart_cfx_of(engine.mixer()),
+        None => smart_cfx_of(player.kept_mixer()),
+    })
+}
+
 /// The deck state only the interface knows, for the controller's LEDs.
 #[tauri::command]
 pub async fn controller_leds(

@@ -18,7 +18,7 @@ import { TimeReadouts } from "./TimeReadouts";
 import { useEventCallback } from "@/store/useEventCallback";
 import { useControllerIntent } from "@/store/useControllerIntent";
 
-import type { Cue, DeckId, Phrase, RowDto } from "@/ipc/types";
+import type { Cue, DeckId, PadMode as ControllerPadMode, Phrase, RowDto } from "@/ipc/types";
 import { getBackend } from "@/ipc/client";
 import { useElementSize } from "@/store/useElementSize";
 import { Artwork } from "@/components/Artwork";
@@ -63,8 +63,6 @@ import {
   adjustLoopPoint,
   beatLoopRange,
   clampLoopBeats,
-  createLongPress,
-  LOOP_IN_HOLD_MS,
   LOOP_BEATS_MAX,
   LOOP_BEATS_MIN,
   loopBeatsLabel,
@@ -111,6 +109,7 @@ import { DeckInfo } from "./DeckInfo";
 import { DualControls, DualHead } from "./DualDeck";
 import { READ_ONLY_REASON, useMemoryCues } from "./useMemoryCues";
 import { useHotCues } from "./useHotCues";
+import { usePadFx } from "./usePadFx";
 import { useCueWriter } from "./useCueWriter";
 import { CueColorMenu } from "./CueColorMenu";
 import styles from "./Player.module.css";
@@ -1527,18 +1526,16 @@ export const Player = memo(function Player({
     if (loopIn !== null) markLoopOut();
     else reloopOrExit();
   }, [loopIn, markLoopOut, reloopOrExit]);
-  // The controller's LOOP IN: a tap is IN, held it is a 4-beat loop, rekordbox's 4BEAT.
-  const loopInTap = useEventCallback(markLoopIn);
-  const fourBeatLoop = useEventCallback(() => {
+  // The FLX4's 4BEAT/EXIT: out of a loop it starts a 4-beat one, in a loop it leaves it.
+  const fourBeatOrExit = useCallback(() => {
+    if (playback.loop?.active) {
+      playback.setLoopActive(false);
+      return;
+    }
     setLoopIn(null);
     setLoopBeats(4);
     loopOfBeats(4);
-  });
-  const loopInButton = useMemo(
-    () => createLongPress(LOOP_IN_HOLD_MS, loopInTap, fourBeatLoop),
-    [loopInTap, fourBeatLoop],
-  );
-  useEffect(() => loopInButton.cancel, [loopInButton]);
+  }, [playback, loopOfBeats]);
   // The two-deck control row: AU starts a loop of the chosen length from
   // the head and MA takes IN and OUT by hand, both on the grid when Q is on.
   // The handlers are the one-deck layout's, so the two behave the same.
@@ -2152,11 +2149,6 @@ export const Player = memo(function Player({
       else dropCue();
       return;
     }
-    if (button === "loopIn") {
-      if (pressed) loopInButton.press();
-      else loopInButton.release();
-      return;
-    }
     if (!pressed) return;
     switch (button) {
       case "play": togglePlay(); break;
@@ -2167,10 +2159,12 @@ export const Player = memo(function Player({
         setTempoRange((range) => TEMPO_RANGES[(TEMPO_RANGES.indexOf(range) + 1) % TEMPO_RANGES.length] ?? 6);
         tempoFader.current.engaged = false;
         break;
+      case "loopIn": markLoopIn(); break;
       case "loopOut": markLoopOut(); break;
       case "shiftLoopIn": toggleLoopAdjust("in"); break;
       case "shiftLoopOut": toggleLoopAdjust("out"); break;
-      case "reloop": reloopOrExit(); break;
+      case "reloop": fourBeatOrExit(); break;
+      case "shiftReloop": reloopOrExit(); break;
       // In a loop, CALL halves and doubles it, as on rekordbox's FLX4 layout.
       case "callPrevious": if (playback.loop?.active) resizeLoop(0.5); else memory.callPrevious(); break;
       case "callNext": if (playback.loop?.active) resizeLoop(2); else memory.callNext(); break;
@@ -2178,7 +2172,8 @@ export const Player = memo(function Player({
       default: break;
     }
   };
-  const controllerPad = (mode: string, pad: number, shift: boolean) => {
+  const padFx = usePadFx(deck, playback.idle ? null : track?.id ?? null, Math.round(bpmX100 * playback.tempo));
+  const controllerPad = (mode: ControllerPadMode, pad: number, shift: boolean) => {
     switch (mode) {
       case "hotCue": {
         const letter = HOT_CUE_LETTERS[pad];
@@ -2209,7 +2204,11 @@ export const Player = memo(function Player({
         if (semitones !== undefined) playback.setKeyShift(semitones);
         return;
       }
-      // SAMPLER, KEYBOARD and the pad FX have nothing behind them yet.
+      case "padFx1":
+      case "padFx2":
+        padFx.press(mode, pad);
+        return;
+      // SAMPLER and KEYBOARD have nothing behind them yet.
       default: return;
     }
   };
@@ -2275,6 +2274,11 @@ export const Player = memo(function Player({
     if (intent.type === "jogTouch" && !intent.touched) {
       jog.current.touched = false;
       jogRelease();
+      return;
+    }
+    // Any pad let go, in any mode: a held PAD FX pad ends whatever the mode is now.
+    if (intent.type === "pad" && !intent.pressed) {
+      padFx.release(intent.pad);
       return;
     }
     if (playback.idle) return;

@@ -1096,38 +1096,6 @@ export function adjustLoopPoint(
   return [inSeconds, Math.max(Math.min(outSeconds + deltaSeconds, end), inSeconds + LOOP_ADJUST_MIN_SECONDS)];
 }
 
-/** LOOP IN held this long is a 4-beat loop. [ASSUME] rekordbox's hold time is not recorded. */
-export const LOOP_IN_HOLD_MS = 500;
-
-/**
- * A button that does `onShort` when let go before `ms`, or `onLong` once
- * held for `ms`, and then nothing when let go.
- */
-export function createLongPress(ms: number, onShort: () => void, onLong: () => void) {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let held = false;
-  return {
-    press: () => {
-      globalThis.clearTimeout(timer);
-      held = true;
-      timer = globalThis.setTimeout(() => {
-        held = false;
-        onLong();
-      }, ms);
-    },
-    release: () => {
-      globalThis.clearTimeout(timer);
-      if (!held) return;
-      held = false;
-      onShort();
-    },
-    cancel: () => {
-      globalThis.clearTimeout(timer);
-      held = false;
-    },
-  };
-}
-
 /**
  * The beat the head is on, 1-based on the grid as `PQTZ` numbers them: the
  * last beat at or before `ms`, or the first when the head is before it.

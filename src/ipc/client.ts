@@ -15,7 +15,7 @@ import type {
   DatabaseDrive, EditHistoryState, ItunesLibrary, LibraryProblem, LibrarySummary, LinkPeerSeen, Meters,
   LinkStatus, MissingExportFile, MissingTrack, MissingTracks, PreviewState, UnanalysedTracks, ReferenceStickSettings, RelocateReport, RowDto, ScriptRequest, Tick,
   TreeNode, ViewHandle,
-  SelectionDetails, TrackDetails, TrackLookups, ControllerIntent, ControllerStatus, RecordingStatus,
+  SelectionDetails, TrackDetails, TrackLookups, ControllerIntent, ControllerStatus, RecordingStatus, SmartCfxState,
 } from "./types";
 import { tauriInvoke } from "./invoke";
 
@@ -376,6 +376,11 @@ async function realBackend(): Promise<Backend> {
     controllerStatus: () => invoke<ControllerStatus>("controller_status"),
     controllerLeds: (deck, leds) => invoke<void>("controller_leds", { deck, leds }),
     setJogVinyl: (on) => invoke<void>("set_jog_vinyl", { on }),
+    setPadFx: (deck, fx, beatMs) => invoke<void>("set_pad_fx", { deck, fx, beatMs }),
+    setSmartCfxOn: (on) => invoke<void>("set_smart_cfx_on", { on }),
+    setSmartCfxKind: (kind) => invoke<void>("set_smart_cfx_kind", { kind }),
+    smartCfxState: () => invoke<SmartCfxState>("smart_cfx_state"),
+    onSmartCfx: (listener) => subscribe<SmartCfxState>("mixer:smart-cfx", listener),
     setEqCurve: (isolator) => invoke<void>("set_eq_curve", { isolator }),
     appDiagnostics: () => invoke<Diagnostics>("app_diagnostics"),
     appVersion: () => invoke<string>("app_version"),

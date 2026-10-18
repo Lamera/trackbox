@@ -65,12 +65,11 @@ effect.
 
 | Control | Action |
 | --- | --- |
-| LOOP IN, tapped | Set the loop in point. With no loop playing it also sets the cue point. |
-| LOOP IN, held (0.5 s) | Start a 4-beat loop. |
+| LOOP IN | Set the loop in point. With no loop playing it also sets the cue point. |
 | LOOP OUT | Set the out point after LOOP IN and start the loop. |
 | SHIFT + LOOP IN / LOOP OUT | While a loop plays: the jog wheel moves that loop point. The button blinks. Press again to stop; the mode also ends with the loop. |
-| RELOOP/EXIT | Exit the loop, or re-enter the last one. |
-| SHIFT + RELOOP/EXIT | Not mapped. |
+| 4BEAT/EXIT | No loop playing: start a 4-beat loop. In a loop: exit it. |
+| SHIFT + 4BEAT/EXIT | Reloop: re-enter the last loop, or exit the one playing. |
 | CUE/LOOP CALL ◀ / ▶ | In a loop: halve or double it. Otherwise: previous or next memory cue. |
 | SHIFT + CUE/LOOP CALL ◀ / ▶ | Not mapped. |
 
@@ -103,9 +102,41 @@ switched by the hardware; SHIFT + a mode button selects the second mode.
 | BEAT LOOP (SHIFT + BEAT JUMP) | Loop of 1/4, 1/2, 1, 2, 4, 8, 16, 32 beats. The active length again exits the loop. | Same as without SHIFT. |
 | BEAT JUMP | Odd pads jump back, even pads forward: 1, 1, 2, 2, 4, 4, 8, 8 beats. | Same as without SHIFT. |
 | KEY SHIFT (SHIFT + SAMPLER) | Key 0, +1, +2, +3, −3, −2, −1, 0 semitones. | Same as without SHIFT. |
-| SAMPLER, KEYBOARD, PAD FX1, PAD FX2 | Not mapped. | Not mapped. |
+| PAD FX1, PAD FX2 | A pad effect while the pad is held; see [PAD FX](#pad-fx). | Same as without SHIFT. |
+| SAMPLER, KEYBOARD | Not mapped. | Not mapped. |
 
-Hot cue pads light when set.
+Pad LEDs by mode:
+
+- HOT CUE: lit where a hot cue is set.
+- PAD FX1, PAD FX2, BEAT JUMP, BEAT LOOP, KEY SHIFT: all lit. In PAD FX, the
+  held pad goes dark while its effect plays.
+- SAMPLER, KEYBOARD: dark.
+
+### PAD FX
+
+Trackbox has its own effect bank for the two PAD FX modes. rekordbox's bank
+is configurable and is not copied. Effects are timed to the deck's playing
+BPM. On a deck without a BPM (no beatgrid), the PAD FX pads do nothing.
+
+| Pad | PAD FX1 | PAD FX2 |
+| --- | --- | --- |
+| 1 | Echo 1/4 beat | Roll 1/16 beat |
+| 2 | Echo 1/2 beat | Roll 1/8 beat |
+| 3 | Echo 1 beat | Roll 1/4 beat |
+| 4 | Echo 2 beats | Roll 1/2 beat |
+| 5 | Reverb, short | Roll 1 beat |
+| 6 | Reverb, long | High-pass sweep (2 beats) |
+| 7 | Trans 1/4 beat | Low-pass sweep (2 beats) |
+| 8 | Trans 1/8 beat | Bit crush |
+
+- Momentary: the effect plays while the pad is held and stops when it is
+  released. Echo and reverb tails ring out after release.
+- When a roll is released, the deck plays on from where it would have been
+  without the roll.
+- With several pads held, the last one pressed plays. Releasing it returns to
+  another held pad; releasing a pad that is not playing changes nothing.
+- Unloading the deck, loading another track, or disconnecting the controller
+  releases the effect.
 
 ### Mixer
 
@@ -113,7 +144,7 @@ Hot cue pads light when set.
 | --- | --- |
 | TRIM | Channel gain: −26 dB to +6 dB, unity at the centre, silent at the far left. |
 | EQ HI / MID / LOW | Channel EQ. Preferences › Audio › Mixer › EQ curve chooses EQ (−26 dB) or ISOLATOR (silence) at the bottom. |
-| CFX | Channel filter: left low pass, right high pass, centre off. |
+| CFX | Channel filter: left low pass, right high pass, centre off. With SMART CFX on, the chosen effect is added; see [SMART CFX](#smart-cfx). |
 | Channel fader | Channel volume. |
 | Crossfader | Crossfade A ↔ B. With X-FADER off (mixer header, or Preferences › Audio › Mixer › Crossfader), both decks play at their channel faders. |
 | HEADPHONES MIX | Cue ↔ master in the headphones. |
@@ -129,6 +160,27 @@ Hot cue pads light when set.
 | CH SELECT lever | 1 or 2: that channel. 1&2: the master (timed to the master deck). |
 | LEVEL/DEPTH | Effect level. |
 | BEAT FX ON/OFF | Toggle the effect. SHIFT + ON/OFF switches it off. |
+
+### SMART CFX
+
+The SMART CFX button on the FLX4, or **SMART CFX** in the PERFORMANCE mixer
+header, turns it on or off for both channels. The header button follows the
+hardware button. On/off lasts until Trackbox quits; the chosen effect is
+remembered.
+
+With SMART CFX on, each CFX knob drives a low pass plus the effect when
+turned left, and a high pass plus the effect when turned right. The centre is
+off. Choose the effect next to the SMART CFX button:
+
+| Effect | Added to the filter |
+| --- | --- |
+| ECHO | Echo (default). |
+| REVERB | Reverb. |
+| NOISE | Noise. |
+| CRUSH | Bit crush. |
+
+While it is on, the FILTER label under each channel shows the effect and the
+knob's tooltip says what it does. SMART FADER is not supported.
 
 ### Browser
 
@@ -178,13 +230,14 @@ software values until moved.
 - The TEMPO fader does not jump the music: it takes over only once it reaches
   the deck's tempo (see [Decks](#decks)).
 - LEDs follow the decks: PLAY, CUE, BEAT SYNC, channel CUE, loop buttons
-  (lit with no loop, blinking in a loop), RELOOP/EXIT, hot cue pads, the
-  active pad mode, BEAT FX ON/OFF, MASTER CUE, and the channel level meters.
-  All are switched off when the controller disconnects or Trackbox quits.
+  (lit with no loop, blinking in a loop), 4BEAT/EXIT, pads (see
+  [Pads](#pads)), the active pad mode, BEAT FX ON/OFF, MASTER CUE, and the
+  channel level meters. All are switched off when the controller disconnects
+  or Trackbox quits.
 - Pulling the cable mid-scratch releases the platter and any pitch bend.
-- MASTER LEVEL, HEADPHONES LEVEL, SMART CFX, SMART FADER, and any other
-  control not listed above are not decoded by Trackbox. Whether a level knob
-  acts inside the FLX4's own audio interface has not been verified.
+- MASTER LEVEL, HEADPHONES LEVEL, SMART FADER, and any other control not
+  listed above are not decoded by Trackbox. Whether a level knob acts inside
+  the FLX4's own audio interface has not been verified.
 
 ## Limitations
 
@@ -197,7 +250,7 @@ software values until moved.
   both apps would act on every press. On Windows, MIDI ports are commonly
   opened by one app at a time; the app that started first may hold the
   controller. Quit the other app first.
-- The SAMPLER, KEYBOARD, and PAD FX pad modes, and the SHIFT layers marked
+- The SAMPLER and KEYBOARD pad modes, and the SHIFT layers marked
   *not mapped*, do nothing yet.
 - Some values come from the Mixxx mapping and are not yet confirmed on every
   unit, such as the BEAT JUMP pad layout and the port name on Windows.

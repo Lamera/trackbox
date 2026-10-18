@@ -134,6 +134,8 @@ pub enum Intent {
     FxDepth { value: f32 },
     /// MASTER CUE: toggles the master onto the headphones.
     MasterCue,
+    /// SMART CFX: toggles the CFX knobs' combined effect.
+    SmartCfx,
 }
 
 impl Intent {
@@ -151,6 +153,7 @@ impl Intent {
                 | Intent::Crossfader { .. }
                 | Intent::HeadphoneMix { .. }
                 | Intent::MasterCue
+                | Intent::SmartCfx
         )
     }
 }
@@ -168,6 +171,8 @@ pub struct DeckLeds {
     pub hot_cues: [bool; 8],
     /// The pad mode button that is lit; 0 for none.
     pub pad_mode: u8,
+    /// Which pads are held down, for the PAD FX modes' LEDs.
+    pub held_pads: [bool; 8],
     /// The half-second blink an active loop's buttons follow.
     pub blink: bool,
     /// The loop point the jog moves: 0 none, 1 the in point, 2 the out point.

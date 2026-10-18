@@ -452,6 +452,11 @@ impl Player {
         self.engine.lock().clone()
     }
 
+    /// The mixer the next engine starts from; the live one is the engine's.
+    pub fn kept_mixer(&self) -> &rbl_deck::MixerSettings {
+        &self.mixer
+    }
+
     pub fn ticking(&self) -> &std::sync::atomic::AtomicBool {
         &self.ticking
     }

@@ -16,7 +16,7 @@
  */
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { BeatFxSettings, DeckId, EqBand, RecordingStatus } from "@/ipc/types";
+import type { BeatFxSettings, DeckId, EqBand, RecordingStatus, SmartCfxKind } from "@/ipc/types";
 import { getBackend } from "@/ipc/client";
 import { errorMessage } from "@/lib/errorMessage";
 import { detectPlatform, dispatchBinding, eqKillBand } from "@/lib/shortcuts";
@@ -35,6 +35,15 @@ const BANDS: ReadonlyArray<{ id: EqBand; label: string }> = [
 
 /** The knob's travel in pixels: a full sweep is this far under the pointer. */
 const KNOB_TRAVEL = 120;
+
+/** SMART CFX: what the CFX knob becomes, by the effect chosen in the mixer header. */
+const SMART_CFX: Record<SmartCfxKind, { label: string; title: string }> = {
+  echo: { label: "ECHO", title: "Smart CFX: low pass + echo ← → high pass + echo" },
+  reverb: { label: "REVERB", title: "Smart CFX: low pass + reverb ← → high pass + reverb" },
+  noise: { label: "NOISE", title: "Smart CFX: low pass + noise ← → high pass + noise" },
+  crush: { label: "CRUSH", title: "Smart CFX: low pass + crush ← → high pass + crush" },
+};
+const SMART_CFX_KINDS = Object.keys(SMART_CFX) as SmartCfxKind[];
 
 /**
  * How close to the middle the crossfader snaps.
@@ -181,7 +190,7 @@ const ChannelMeter = memo(function ChannelMeter({ deck }: { deck: DeckId }) {
 
 /** One deck's half of the strip: the gain block and the three kill buttons. */
 const Channel = memo(function Channel({
-  deck, flipped, performance, controller = null,
+  deck, flipped, performance, controller = null, smartCfx = null,
 }: {
   deck: DeckId;
   performance?: boolean;
@@ -189,6 +198,8 @@ const Channel = memo(function Channel({
   flipped?: boolean;
   /** A connected controller, whose faders start closed until they move. */
   controller?: string | null;
+  /** The SMART CFX effect on the CFX knob, or null for the plain filter. */
+  smartCfx?: SmartCfxKind | null;
 }) {
   const [trim, setTrim] = useState(1);
   const [volume, setVolume] = useState(1);
@@ -420,13 +431,15 @@ const Channel = memo(function Channel({
                 ))}
               </div>
               <div className={styles.knobRow}>
-                <span className={styles.rowLabel}>FILTER</span>
+                <span className={styles.rowLabel}>{smartCfx ? SMART_CFX[smartCfx].label : "FILTER"}</span>
                 <Knob
                   label={`Deck ${deck.toUpperCase()} filter`}
                   value={filter} origin={0.5}
                   onChange={adjustFilter} onReset={() => adjustFilter(0.5)}
                   caption={Math.abs(filter - 0.5) < 0.02 ? "OFF" : filter < 0.5 ? "LPF" : "HPF"}
-                  title="Left: low pass, right: high pass; double-click to turn off"
+                  title={smartCfx
+                    ? SMART_CFX[smartCfx].title
+                    : "Left: low pass, right: high pass; double-click to turn off"}
                   pending={pending("filter")}
                 />
               </div>
@@ -627,6 +640,39 @@ export function MixerStrip({
   useEffect(() => {
     void getBackend().then((backend) => backend.setJogVinyl(jogVinyl)).catch(() => {});
   }, [jogVinyl]);
+  // SMART CFX: the effect is remembered, on/off lasts the session and follows the controller's button.
+  const smartCfxKind = preferences.audio.smartCfxKind;
+  const [smartCfxOn, setSmartCfxOn] = useState(false);
+  const [smartCfxError, setSmartCfxError] = useState<string | null>(null);
+  useEffect(() => {
+    void getBackend().then((backend) => backend.setSmartCfxKind(smartCfxKind))
+      .then(() => setSmartCfxError(null))
+      .catch(() => setSmartCfxError("SMART CFX could not reach the audio engine."));
+  }, [smartCfxKind]);
+  useEffect(() => {
+    let live = true;
+    let stop: (() => void) | undefined;
+    void getBackend().then(async (backend) => {
+      stop = backend.onSmartCfx((state) => { if (live) setSmartCfxOn(state.on); });
+      const state = await backend.smartCfxState();
+      if (live) setSmartCfxOn(state.on);
+      else stop();
+    }).catch(() => {});
+    return () => {
+      live = false;
+      stop?.();
+    };
+  }, []);
+  const toggleSmartCfx = () => {
+    const next = !smartCfxOn;
+    setSmartCfxOn(next);
+    void getBackend().then((backend) => backend.setSmartCfxOn(next))
+      .then(() => setSmartCfxError(null))
+      .catch(() => {
+        setSmartCfxOn(!next);
+        setSmartCfxError("SMART CFX could not reach the audio engine.");
+      });
+  };
   const track = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -669,11 +715,27 @@ export function MixerStrip({
           >
             X-FADER
           </button>
+          <button
+            type="button"
+            aria-pressed={smartCfxOn}
+            title="Smart CFX: the CFX knobs add the chosen effect to the filter"
+            onClick={toggleSmartCfx}
+          >
+            SMART CFX
+          </button>
+          <select
+            aria-label="Smart CFX effect"
+            value={smartCfxKind}
+            onChange={(event) => update("audio", { smartCfxKind: event.currentTarget.value as SmartCfxKind })}
+          >
+            {SMART_CFX_KINDS.map((kind) => <option key={kind} value={kind}>{SMART_CFX[kind].label}</option>)}
+          </select>
           <RecordButton folder={preferences.audio.recordingFolder} />
           {curveError ? <span role="alert">{curveError}</span> : null}
+          {smartCfxError ? <span role="alert">{smartCfxError}</span> : null}
         </div>
       ) : null}
-      <Channel key="a" deck="a" performance={performance} controller={controller} />
+      <Channel key="a" deck="a" performance={performance} controller={controller} smartCfx={smartCfxOn ? smartCfxKind : null} />
       {performance ? (
         <div key="crossfader" className={styles.fader}>
           <Knob
@@ -737,7 +799,7 @@ export function MixerStrip({
           <span className={styles.deckLabel}>B</span>
         </div>
       )}
-      <Channel key="b" deck="b" flipped performance={performance} controller={controller} />
+      <Channel key="b" deck="b" flipped performance={performance} controller={controller} smartCfx={smartCfxOn ? smartCfxKind : null} />
       {performance ? <BeatFx key="beat-fx" bpmX100={bpmX100} masterDeck={masterDeck} depthPending={pending("fxDepth")} /> : null}
     </div>
   );

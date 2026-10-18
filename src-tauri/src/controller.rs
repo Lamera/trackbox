@@ -359,14 +359,15 @@ mod host {
                     last_keepalive = Instant::now();
                     live.send(&flx4::KEEPALIVE);
                     // [OBS] The hardware drops LEDs it was sent around a
-                    // keepalive; lit only once, they stay dark. All again.
-                    live.sent.clear();
+                    // keepalive; lit only once, they stay dark. The lit ones
+                    // again; the dark ones are known dark and stay unsent.
+                    live.sent.retain(|_, value| *value == 0);
                 } else if last_leds.elapsed() < LEDS_EVERY {
                     continue;
                 }
                 last_leds = Instant::now();
                 let blink = (started.elapsed().as_millis() / 500) % 2 == 0;
-                let (leds, fx_on, master_cue, load_ids) = engine_leds(app, *controller.leds.lock(), blink);
+                let (leds, fx_on, master_cue, smart_cfx, load_ids) = engine_leds(app, *controller.leds.lock(), blink);
                 if let Some(seen) = loads {
                     for ((deck, was), now) in CtlDeck::ALL.into_iter().zip(seen).zip(load_ids) {
                         if now != 0 && now != was {
@@ -378,6 +379,7 @@ mod host {
                 for deck in CtlDeck::ALL {
                     if let Some(mut state) = leds.get(deck.index()).copied() {
                         state.pad_mode = decoder.pad_mode(deck);
+                        state.held_pads = decoder.held_pads(deck);
                         if let Some(shown) = meters.get_mut(deck.index()) {
                             // Up at once, down at a steady rate.
                             *shown = f32::from(state.level).max(*shown - METER_FALL).max(0.0);
@@ -394,6 +396,7 @@ mod host {
                     live.light(message);
                 }
                 live.light(flx4::master_cue_led(master_cue));
+                live.light(flx4::smart_cfx_led(smart_cfx));
             }
         }
     }
@@ -411,14 +414,14 @@ mod host {
     }
 
     /// The interface's half of the LEDs, with the engine's on top, whether
-    /// BEAT FX is on, whether MASTER CUE is, and each deck's load id.
+    /// BEAT FX, MASTER CUE and SMART CFX are on, and each deck's load id.
     fn engine_leds<R: Runtime>(
         app: &AppHandle<R>,
         mut leds: [DeckLeds; 2],
         blink: bool,
-    ) -> ([DeckLeds; 2], bool, bool, [u64; 2]) {
+    ) -> ([DeckLeds; 2], bool, bool, bool, [u64; 2]) {
         let Some(engine) = app.state::<Arc<Player>>().opened() else {
-            return ([DeckLeds::default(); 2], false, false, [0; 2]);
+            return ([DeckLeds::default(); 2], false, false, false, [0; 2]);
         };
         let snapshot = engine.snapshot();
         let load_ids = [snapshot.a.load_id, snapshot.b.load_id];
@@ -431,7 +434,7 @@ mod host {
             state.channel_cue = channel.is_some_and(rbl_deck::ChannelSettings::cue);
             state.level = channel.map_or(0, |c| meter(c.take_level()));
         }
-        (leds, engine.fx().on(), engine.mixer().master_cue(), load_ids)
+        (leds, engine.fx().on(), engine.mixer().master_cue(), engine.mixer().smart_cfx_on(), load_ids)
     }
 
     /// A peak as the channel meter's 0 to 127: −36 dB to full scale.
@@ -521,6 +524,10 @@ mod host {
             Intent::Crossfader { value } => mixer.set_crossfade(value),
             Intent::HeadphoneMix { value } => mixer.set_headphone_mix(value),
             Intent::MasterCue => mixer.set_master_cue(!mixer.master_cue()),
+            Intent::SmartCfx => {
+                mixer.set_smart_cfx_on(!mixer.smart_cfx_on());
+                crate::commands::emit_smart_cfx(app, mixer);
+            }
             _ => {}
         }
     }

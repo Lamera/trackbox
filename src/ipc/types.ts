@@ -763,6 +763,14 @@ export interface Backend {
   controllerLeds(deck: DeckId, leds: ControllerLeds): Promise<void>;
   /** Vinyl: a touched jog platter scratches. Off (CDJ), it only bends. */
   setJogVinyl(on: boolean): Promise<void>;
+  /** A pad effect on one deck while its pad is held; null lets it go (tails ring out). */
+  setPadFx(deck: DeckId, fx: PadFx | null, beatMs: number): Promise<void>;
+  /** SMART CFX: the CFX knobs drive a combined effect instead of the plain filter. */
+  setSmartCfxOn(on: boolean): Promise<void>;
+  setSmartCfxKind(kind: SmartCfxKind): Promise<void>;
+  smartCfxState(): Promise<SmartCfxState>;
+  /** Changes from either side, the controller's SMART CFX button included. */
+  onSmartCfx(listener: (state: SmartCfxState) => void): () => void;
   /** EQ or ISOLATOR — the bottom of each band's travel, and nothing else. */
   setEqCurve(isolator: boolean): Promise<void>;
   /** Both decks now, to anchor the interface when it starts. */
@@ -1168,12 +1176,29 @@ export type ControllerIntent =
   | { type: "fxChannel"; deck: DeckId; selected: boolean }
   | { type: "fxDepth"; value: number }
   | { type: "masterCue" }
+  /** SMART CFX pressed; already toggled in the engine, the state follows as `mixer:smart-cfx`. */
+  | { type: "smartCfx" }
   /** The platter touched or let go. */
   | { type: "jogTouch"; deck: DeckId; touched: boolean }
   /** A turn of the wheel, in its own ticks; positive is clockwise. */
   | { type: "jog"; deck: DeckId; mode: "scratch" | "bend" | "search"; ticks: number };
 
 /** BEAT FX as the engine runs it. */
+export type PadFxKind = "echo" | "reverb" | "trans" | "roll" | "hpf" | "lpf" | "crush";
+
+/** One pad effect: `beats` is the echo/trans/roll length, the sweep time or the reverb size. */
+export interface PadFx {
+  kind: PadFxKind;
+  beats: number;
+}
+
+export type SmartCfxKind = "echo" | "reverb" | "noise" | "crush";
+
+export interface SmartCfxState {
+  on: boolean;
+  kind: SmartCfxKind;
+}
+
 export interface BeatFxSettings {
   on: boolean;
   kind: "echo" | "reverb";
