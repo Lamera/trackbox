@@ -60,8 +60,11 @@ import {
   windowAround,
   type CuePanel,
   type PadMode,
+  adjustLoopPoint,
   beatLoopRange,
   clampLoopBeats,
+  createLongPress,
+  LOOP_IN_HOLD_MS,
   LOOP_BEATS_MAX,
   LOOP_BEATS_MIN,
   loopBeatsLabel,
@@ -77,6 +80,7 @@ import {
 } from "@/lib/player";
 import { type DeckLoop, usePlayback } from "@/store/usePlayback";
 import { usePreferences, usePreferencesContext, useTooltip } from "@/store/usePreferences";
+import { useTranslation } from "@/i18n";
 import { ContextMenu } from "@/components/ContextMenu";
 import { deckMenu, type DeckAction } from "@/lib/contextMenus";
 import { KeyShift } from "./KeyShift";
@@ -123,6 +127,10 @@ const JOG_SECONDS_PER_TICK = 1.8 / 720;
 const JOG_SEARCH_FACTOR = 40;
 /** A stopped deck nudged by the wheel's side lets go of the drag after this. */
 const JOG_NUDGE_HOLD_MS = 150;
+/** SHIFT and the wheel moving a loop end: a turn moves it about fourteen seconds. */
+const LOOP_ADJUST_SEARCH_FACTOR = 8;
+/** A turning wheel builds on the loop end it last sent for this long; the engine's read-back trails it. */
+const LOOP_ADJUST_HOLD_MS = 300;
 
 export interface PlayerProps {
   /** The row the browser has selected, or `null` when nothing is. */
@@ -1009,6 +1017,7 @@ export const Player = memo(function Player({
     [updatePreferences, track, onAnalyse, onExportTrack, onExportLoop, playback.loop],
   );
   const tip = useTooltip();
+  const t = useTranslation();
   // QUANTIZE BEAT VALUE in Preferences: the grid every quantized cue snaps
   // to, split as finely as the value asks.
   const quantizeGrid = useMemo(
@@ -1436,6 +1445,9 @@ export const Player = memo(function Player({
   /** A LOOP IN pressed and waiting for its OUT, in seconds. */
   const [loopIn, setLoopIn] = useState<number | null>(null);
   const activeLoop = playback.loop?.active ?? false;
+  /** SHIFT+LOOP IN or OUT: the end of the playing loop the jog moves. Gone with the loop. */
+  const [loopAdjust, setLoopAdjust] = useState<"in" | "out" | null>(null);
+  if (loopAdjust !== null && !activeLoop) setLoopAdjust(null);
   // A locked deck loops on whole beats: a loop IN between two beats, or a
   // length such as 1.5 beats, takes the deck off the master's beat.
   const loopSnap = quantize ? (phaseLocked ? grid : quantizeGrid) : null;
@@ -1515,6 +1527,18 @@ export const Player = memo(function Player({
     if (loopIn !== null) markLoopOut();
     else reloopOrExit();
   }, [loopIn, markLoopOut, reloopOrExit]);
+  // The controller's LOOP IN: a tap is IN, held it is a 4-beat loop, rekordbox's 4BEAT.
+  const loopInTap = useEventCallback(markLoopIn);
+  const fourBeatLoop = useEventCallback(() => {
+    setLoopIn(null);
+    setLoopBeats(4);
+    loopOfBeats(4);
+  });
+  const loopInButton = useMemo(
+    () => createLongPress(LOOP_IN_HOLD_MS, loopInTap, fourBeatLoop),
+    [loopInTap, fourBeatLoop],
+  );
+  useEffect(() => loopInButton.cancel, [loopInButton]);
   // The two-deck control row: AU starts a loop of the chosen length from
   // the head and MA takes IN and OUT by hand, both on the grid when Q is on.
   // The handlers are the one-deck layout's, so the two behave the same.
@@ -2128,6 +2152,11 @@ export const Player = memo(function Player({
       else dropCue();
       return;
     }
+    if (button === "loopIn") {
+      if (pressed) loopInButton.press();
+      else loopInButton.release();
+      return;
+    }
     if (!pressed) return;
     switch (button) {
       case "play": togglePlay(); break;
@@ -2138,8 +2167,9 @@ export const Player = memo(function Player({
         setTempoRange((range) => TEMPO_RANGES[(TEMPO_RANGES.indexOf(range) + 1) % TEMPO_RANGES.length] ?? 6);
         tempoFader.current.engaged = false;
         break;
-      case "loopIn": markLoopIn(); break;
       case "loopOut": markLoopOut(); break;
+      case "shiftLoopIn": toggleLoopAdjust("in"); break;
+      case "shiftLoopOut": toggleLoopAdjust("out"); break;
       case "reloop": reloopOrExit(); break;
       // In a loop, CALL halves and doubles it, as on rekordbox's FLX4 layout.
       case "callPrevious": if (playback.loop?.active) resizeLoop(0.5); else memory.callPrevious(); break;
@@ -2214,6 +2244,27 @@ export const Player = memo(function Player({
     }
   }, [playback, jogGrab, jogRelease]);
   useEffect(() => jogRelease, [jogRelease]);
+  const loopEdit = useRef<{ range: [number, number]; at: number } | null>(null);
+  const toggleLoopAdjust = (point: "in" | "out") => {
+    if (!activeLoop) return;
+    jogRelease();
+    loopEdit.current = null;
+    setLoopAdjust((current) => (current === point ? null : point));
+  };
+  /** The wheel in loop adjust: the chosen end moves, the head stays unless the loop leaves it behind. */
+  const adjustLoop = (seconds: number) => {
+    const loop = playback.loop;
+    if (!loop || loopAdjust === null) return;
+    const now = performance.now();
+    const edit = loopEdit.current;
+    const [from, to] = edit && now - edit.at < LOOP_ADJUST_HOLD_MS ? edit.range : [loop.inSeconds, loop.outSeconds];
+    const range = adjustLoopPoint(from, to, loopAdjust, seconds, playback.duration);
+    loopEdit.current = { range, at: now };
+    playback.setLoop(range[0], range[1]);
+    const head = playback.positionNow();
+    const wrapped = wrapIntoLoop(head, range[0], range[1]);
+    if (wrapped !== head) playback.seek(wrapped);
+  };
   useControllerIntent((intent) => {
     if (intent.type === "load" || !("deck" in intent) || intent.deck !== deck) return;
     // Letting go of CUE or of the platter must always land, loaded or not.
@@ -2231,8 +2282,12 @@ export const Player = memo(function Player({
     else if (intent.type === "button") controllerButton(intent.button, intent.pressed);
     else if (intent.type === "pad" && intent.pressed) controllerPad(intent.mode, intent.pad, intent.shift);
     else if (intent.type === "jogTouch") {
+      // Moving a loop end, the platter holds nothing.
+      if (loopAdjust !== null) return;
       jog.current.touched = true;
       jogGrab();
+    } else if (intent.type === "jog" && loopAdjust !== null) {
+      adjustLoop(intent.ticks * JOG_SECONDS_PER_TICK * (intent.mode === "search" ? LOOP_ADJUST_SEARCH_FACTOR : 1));
     } else if (intent.type === "jog") {
       jogTurn(intent.ticks * (intent.mode === "search" ? JOG_SEARCH_FACTOR : 1));
     }
@@ -2245,6 +2300,9 @@ export const Player = memo(function Player({
       .then((backend) => backend.controllerLeds(deck, { sync: ledKey.startsWith("1"), hotCues }))
       .catch(() => {});
   }, [deck, ledKey]);
+  useEffect(() => {
+    void getBackend().then((backend) => backend.controllerLeds(deck, { loopAdjust: loopAdjust ?? "none" })).catch(() => {});
+  }, [deck, loopAdjust]);
 
   const takesDrop = dragging && Boolean(onDropTrack);
 
@@ -2530,6 +2588,8 @@ export const Player = memo(function Player({
       data-flipped={flipped || undefined}
       // The two-deck body, whose rows are DualDeck's.
       data-dual={dual || undefined}
+      // SHIFT+LOOP IN or OUT: that loop button blinks, in either layout.
+      data-loop-adjust={loopAdjust ?? undefined}
       data-orientation={waveformOrientation}
       data-tempo-slider={viewPrefs.tempoSlider || undefined}
       data-droppable={takesDrop || undefined}
@@ -2947,7 +3007,8 @@ export const Player = memo(function Player({
                 <button
                   type="button"
                   className={styles.memoryLabel}
-                  data-on={loopIn !== null || undefined}
+                  data-on={loopIn !== null || loopAdjust === "in" || undefined}
+                  aria-pressed={loopAdjust === "in" || undefined}
                   aria-label="Loop in"
                   title={tip("Loop In")}
                   disabled={playback.idle}
@@ -2958,6 +3019,8 @@ export const Player = memo(function Player({
                 <button
                   type="button"
                   className={styles.memoryLabel}
+                  data-on={loopAdjust === "out" || undefined}
+                  aria-pressed={loopAdjust === "out" || undefined}
                   aria-label="Loop out"
                   title={tip(loopIn !== null ? "Loop Out" : "Reloop/Exit")}
                   disabled={loopIn === null && !playback.loop}
@@ -3114,7 +3177,7 @@ export const Player = memo(function Player({
                       <span className={styles.cueTime}>{splitTime(cue.positionMs / 1000).main}</span>
                       {isLoop ? (
                         <span className={styles.cueLoop} role="img" aria-label="Loop"
-                          title={`Loop, ${((cue.outMs - cue.positionMs) / 1000).toFixed(1)} s`}>
+                          title={t("Loop, {seconds} s", { seconds: ((cue.outMs - cue.positionMs) / 1000).toFixed(1) })}>
                           ↻
                         </span>
                       ) : null}

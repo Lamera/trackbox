@@ -166,3 +166,19 @@ it("shows bypassed reduction as zero while continuing to meter output", async ()
   expect(host.querySelector('[aria-label="Gain reduction"]')?.getAttribute("aria-valuenow")).toBe("0");
   expect(host.querySelector('[aria-label="Gain reduction"]')?.getAttribute("aria-valuetext")).toBe("Limiter off");
 });
+
+it("the jog switch starts on vinyl and tells the controller when it changes", async () => {
+  const setJogVinyl = vi.fn(() => Promise.resolve());
+  __setBackend({
+    audioDevices: () => Promise.resolve({ devices: [], default: null, chosen: null }),
+    setJogVinyl,
+  } as unknown as Backend);
+  mount(DEFAULT_LIMITER);
+  await settle();
+  const jog = [...host.querySelectorAll<HTMLInputElement>('input[role="switch"]')]
+    .find((input) => input.closest("label")?.textContent === "Jog wheel: vinyl mode (scratch when touched)");
+  expect(jog?.checked).toBe(true);
+  act(() => jog?.click());
+  await settle();
+  expect(setJogVinyl).toHaveBeenCalledWith(false);
+});

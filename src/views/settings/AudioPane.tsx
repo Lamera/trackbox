@@ -145,6 +145,7 @@ export function AudioPane({ limiter, onLimiterChange, reduction, vu, peakLeft = 
         ends={[`${BUFFER_SIZES[0]}`, `${BUFFER_SIZES[BUFFER_SIZES.length - 1]}`]}
         onChange={(stop) => set({ bufferSize: BUFFER_SIZES[stop] ?? prefs.bufferSize })}
       />
+      <Note>With a DJ controller, 256 samples keeps the jog wheels tight; raise it if the dropout meter shows dropouts.</Note>
     </Section>
 
     <Section title="Metronome">
@@ -184,6 +185,14 @@ export function AudioPane({ limiter, onLimiterChange, reduction, vu, peakLeft = 
         onChange={(eqCurve) => set({ eqCurve })}
       />
       <Toggle label="Crossfader" checked={prefs.crossfader} onChange={(crossfader) => set({ crossfader })} />
+      <Toggle
+        label="Jog wheel: vinyl mode (scratch when touched)"
+        checked={prefs.jogVinyl}
+        onChange={(jogVinyl) => {
+          set({ jogVinyl });
+          void getBackend().then((backend) => backend.setJogVinyl(jogVinyl)).catch(() => {});
+        }}
+      />
     </Section>
 
     <Section title="Headphones">

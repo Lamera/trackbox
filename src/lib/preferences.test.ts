@@ -55,6 +55,13 @@ describe("sanitisePreferences", () => {
     expect(sanitisePreferences({ analysis: { firstBeatCue: true } }).analysis.firstBeatCue).toBe(true);
   });
 
+  it("keeps the jog wheels in vinyl mode unless the store plainly says not to", () => {
+    expect(DEFAULT_PREFERENCES.audio.jogVinyl).toBe(true);
+    expect(sanitisePreferences({ audio: {} }).audio.jogVinyl).toBe(true);
+    expect(sanitisePreferences({ audio: { jogVinyl: "no" } }).audio.jogVinyl).toBe(true);
+    expect(sanitisePreferences({ audio: { jogVinyl: false } }).audio.jogVinyl).toBe(false);
+  });
+
   it("keeps the browser key-sort choice and preserves the old display-based ordering", () => {
     expect(sanitisePreferences({view: {keySort: "musical"}}).view.keySort).toBe("musical");
     expect(sanitisePreferences({view: {keySort: "invalid"}}).view.keySort).toBe("alphabetical");

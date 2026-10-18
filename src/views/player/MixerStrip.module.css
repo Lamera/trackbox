@@ -273,6 +273,25 @@
   gap: 4px;
 }
 .faderColumn .vFader { flex: 1; height: auto; min-height: 72px; }
+/* The fader with its channel meter beside it, towards the centre. */
+.faderRow { flex: 1; display: flex; gap: 3px; }
+.channel[data-flipped] .faderRow { flex-direction: row-reverse; }
+.faderRow .vFader { flex: none; }
+/* The top bar's meter turned upright: same thickness, track and colours. */
+.channelMeter {
+  position: relative;
+  flex: none;
+  width: var(--s-top-meter-h);
+  background: var(--c-meter-track);
+  overflow: hidden;
+}
+.channelMeterFill {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to top,
+    var(--c-meter-green) 0%, var(--c-meter-green) 70%,
+    var(--c-meter-yellow) 70%, var(--c-meter-yellow) 90%, var(--c-meter-red) 90%);
+}
 .strip[data-performance] .faderColumn .cueButton { width: 30px; }
 .rowLabel {
   width: var(--s-mixer-band-w);

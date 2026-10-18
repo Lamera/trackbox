@@ -19,6 +19,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BeatFxSettings, DeckId, EqBand } from "@/ipc/types";
 import { getBackend } from "@/ipc/client";
 import { detectPlatform, dispatchBinding, eqKillBand } from "@/lib/shortcuts";
+import { VuMeter } from "@/lib/vuMeter";
 import { useControllerIntent } from "@/store/useControllerIntent";
 import { usePreferencesContext } from "@/store/usePreferences";
 import { Fader, Knob } from "./MixerControls";
@@ -48,6 +49,73 @@ function trimLabel(trim: number): string {
   const db = 20 * Math.log10(trim);
   return `${db > 0 ? "+" : ""}${db.toFixed(1)}dB`;
 }
+
+/** How long without a reading before the meter falls on its own, as the master's does. */
+const METER_SILENT_AFTER_MS = 100;
+
+/**
+ * A channel's level, pre-fader, on the master meter's rekordbox scale
+ * (-44 to 0 dBFS, 1 dB steps). Its own subscription, so a reading redraws
+ * this bar and not the knobs. No engine is no readings, which is an empty bar.
+ */
+const ChannelMeter = memo(function ChannelMeter({ deck }: { deck: DeckId }) {
+  const [shown, setShown] = useState(0);
+  useEffect(() => {
+    let live = true;
+    let stop: (() => void) | undefined;
+    let quiet: ReturnType<typeof setTimeout> | undefined;
+    let falling: number | undefined;
+    // No channel RMS is measured, so always the peak-only scale.
+    const meter = new VuMeter("normal");
+    let last = performance.now();
+    const step = (peak: number) => {
+      const now = performance.now();
+      setShown(meter.step(peak, 0, now - last).peak);
+      last = now;
+    };
+    const stand = () => {
+      if (falling !== undefined) cancelAnimationFrame(falling);
+      falling = undefined;
+    };
+    // The bar brings itself down, frame by frame, until it is empty.
+    const fall = () => {
+      step(0);
+      falling = meter.active ? requestAnimationFrame(fall) : undefined;
+    };
+    void getBackend().then((backend) => {
+      if (!live) return;
+      stop = backend.onMeters((meters) => {
+        const peak = meters.channelPeaks?.[deck === "a" ? 0 : 1];
+        if (!live || peak === undefined) return;
+        stand();
+        step(peak);
+        if (quiet !== undefined) clearTimeout(quiet);
+        // The ticker stops with the music; the bar brings itself down.
+        quiet = setTimeout(() => {
+          falling = requestAnimationFrame(fall);
+        }, METER_SILENT_AFTER_MS);
+      });
+    }).catch(() => {});
+    return () => {
+      live = false;
+      stop?.();
+      if (quiet !== undefined) clearTimeout(quiet);
+      stand();
+    };
+  }, [deck]);
+  return (
+    <div
+      className={styles.channelMeter}
+      role="meter"
+      aria-label={`Deck ${deck.toUpperCase()} level`}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(shown * 100)}
+    >
+      <span className={styles.channelMeterFill} style={{ clipPath: `inset(${(1 - shown) * 100}% 0 0 0)` }} aria-hidden />
+    </div>
+  );
+});
 
 /** One deck's half of the strip: the gain block and the three kill buttons. */
 const Channel = memo(function Channel({
@@ -313,14 +381,17 @@ const Channel = memo(function Channel({
               >
                 CUE
               </button>
-              <Fader
-                label={`Deck ${deck.toUpperCase()} channel volume`}
-                value={volume}
-                onChange={adjustVolume} onReset={() => adjustVolume(1)}
-                valueText={`${Math.round(volume * 100)}%`}
-                title="Channel fader (post-EQ); double-click to restore unity"
-                pending={pending("volume")}
-              />
+              <div className={styles.faderRow}>
+                <Fader
+                  label={`Deck ${deck.toUpperCase()} channel volume`}
+                  value={volume}
+                  onChange={adjustVolume} onReset={() => adjustVolume(1)}
+                  valueText={`${Math.round(volume * 100)}%`}
+                  title="Channel fader (post-EQ); double-click to restore unity"
+                  pending={pending("volume")}
+                />
+                <ChannelMeter deck={deck} />
+              </div>
               <span className={styles.knobCaption}>{Math.round(volume * 100)}%</span>
             </div>
           </div>
@@ -490,6 +561,10 @@ export function MixerStrip({
   useEffect(() => {
     void getBackend().then((backend) => backend.setCrossfaderOn(crossfaderOn)).catch(() => {});
   }, [crossfaderOn]);
+  const jogVinyl = preferences.audio.jogVinyl;
+  useEffect(() => {
+    void getBackend().then((backend) => backend.setJogVinyl(jogVinyl)).catch(() => {});
+  }, [jogVinyl]);
   const track = useRef<HTMLDivElement>(null);
 
   useEffect(() => {

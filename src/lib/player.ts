@@ -1073,6 +1073,61 @@ export function wrapIntoLoop(head: number, from: number, to: number): number {
   return head >= to && to > from ? from + ((head - from) % (to - from)) : head;
 }
 
+/** The shortest loop the jog squeezes a loop to, in seconds. [ASSUME] */
+export const LOOP_ADJUST_MIN_SECONDS = 0.01;
+
+/**
+ * The loop `inSeconds`–`outSeconds` with one end moved by `deltaSeconds`, as
+ * SHIFT+LOOP IN or OUT and the jog move it: the in point not before 0, the
+ * out point not past `duration` when that is known, and the two never closer
+ * than LOOP_ADJUST_MIN_SECONDS.
+ */
+export function adjustLoopPoint(
+  inSeconds: number,
+  outSeconds: number,
+  point: "in" | "out",
+  deltaSeconds: number,
+  duration: number,
+): [number, number] {
+  if (point === "in") {
+    return [Math.max(Math.min(inSeconds + deltaSeconds, outSeconds - LOOP_ADJUST_MIN_SECONDS), 0), outSeconds];
+  }
+  const end = duration > 0 ? duration : Infinity;
+  return [inSeconds, Math.max(Math.min(outSeconds + deltaSeconds, end), inSeconds + LOOP_ADJUST_MIN_SECONDS)];
+}
+
+/** LOOP IN held this long is a 4-beat loop. [ASSUME] rekordbox's hold time is not recorded. */
+export const LOOP_IN_HOLD_MS = 500;
+
+/**
+ * A button that does `onShort` when let go before `ms`, or `onLong` once
+ * held for `ms`, and then nothing when let go.
+ */
+export function createLongPress(ms: number, onShort: () => void, onLong: () => void) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let held = false;
+  return {
+    press: () => {
+      globalThis.clearTimeout(timer);
+      held = true;
+      timer = globalThis.setTimeout(() => {
+        held = false;
+        onLong();
+      }, ms);
+    },
+    release: () => {
+      globalThis.clearTimeout(timer);
+      if (!held) return;
+      held = false;
+      onShort();
+    },
+    cancel: () => {
+      globalThis.clearTimeout(timer);
+      held = false;
+    },
+  };
+}
+
 /**
  * The beat the head is on, 1-based on the grid as `PQTZ` numbers them: the
  * last beat at or before `ms`, or the first when the head is before it.

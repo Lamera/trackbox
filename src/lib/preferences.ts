@@ -170,6 +170,8 @@ export interface AudioPreferences {
   eqCurve: "eq" | "isolator";
   /** Off is THRU: both decks at their channel faders, whatever the crossfader. */
   crossfader: boolean;
+  /** A controller's jog platter scratches when touched (vinyl); off, it only bends (CDJ). */
+  jogVinyl: boolean;
 }
 
 export type HeadphoneRouting = "auto" | "off" | "split" | "lanes";
@@ -320,6 +322,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
     headphones: "auto",
     eqCurve: "eq",
     crossfader: true,
+    jogVinyl: true,
   },
   analysis: {
     mode: "rbxport",
@@ -497,6 +500,7 @@ export function sanitisePreferences(value: unknown): Preferences {
       headphones: oneOf(audio.headphones, HEADPHONE_ROUTINGS, d.audio.headphones),
       eqCurve: oneOf(audio.eqCurve, ["eq", "isolator"] as const, d.audio.eqCurve),
       crossfader: bool(audio.crossfader, d.audio.crossfader),
+      jogVinyl: bool(audio.jogVinyl, d.audio.jogVinyl),
     },
     analysis: {
       mode: oneOf(analysis.mode, ["rekordbox", "rbxport"], d.analysis.mode),

@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { DEFAULT_PREFERENCES } from "@/lib/preferences";
-import type { BeatFxSettings, ControllerIntent } from "@/ipc/types";
+import type { BeatFxSettings, ControllerIntent, Meters } from "@/ipc/types";
 import { PreferencesProvider } from "@/store/usePreferences";
 import { MixerStrip } from "./MixerStrip";
 
@@ -22,11 +22,12 @@ const setBeatFx = vi.fn((_fx: BeatFxSettings) => Promise.resolve());
 const update = vi.fn();
 const intents = new Set<(intent: ControllerIntent) => void>();
 const statuses = new Set<(status: { name: string | null }) => void>();
+const meterListeners = new Set<(meters: Meters) => void>();
 vi.mock("@/ipc/client", () => ({
   getBackend: () => Promise.resolve({
     setChannelKill, setChannelBand, setChannelVolume, setEqCurve, setChannelCue, setChannelFilter, setHeadphoneMix,
     setCrossfaderOn, setBeatFx,
-    setChannelTrim: () => Promise.resolve(), setCrossfade: () => Promise.resolve(),
+    setChannelTrim: () => Promise.resolve(), setCrossfade: () => Promise.resolve(), setJogVinyl: () => Promise.resolve(),
     onControllerIntent: (listener: (intent: ControllerIntent) => void) => {
       intents.add(listener);
       return () => intents.delete(listener);
@@ -36,6 +37,10 @@ vi.mock("@/ipc/client", () => ({
       return () => statuses.delete(listener);
     },
     controllerStatus: () => Promise.resolve({ name: null }),
+    onMeters: (listener: (meters: Meters) => void) => {
+      meterListeners.add(listener);
+      return () => meterListeners.delete(listener);
+    },
   }),
 }));
 
@@ -81,6 +86,27 @@ afterEach(() => { act(() => root.unmount()); host.remove(); });
 
 const press = (init: KeyboardEventInit) =>
   act(() => { window.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, ...init })); });
+
+it("meters each channel from the engine's meter tick, and stays empty without readings", async () => {
+  mount({}, true);
+  await act(async () => {});
+  const level = (deck: string) =>
+    host.querySelector<HTMLElement>(`[role="meter"][aria-label="Deck ${deck} level"]`)?.getAttribute("aria-valuenow");
+  expect(level("A")).toBe("0");
+  expect(level("B")).toBe("0");
+  const tick = (meters: Partial<Meters>) => act(() => {
+    for (const listener of meterListeners) {
+      listener({ peakLeft: 0, peakRight: 0, master: 1, reduction: 0, ...meters });
+    }
+  });
+  // An engine without channel peaks leaves the bars alone.
+  tick({ peakLeft: 1, peakRight: 1 });
+  expect(level("A")).toBe("0");
+  // -6 dBFS is -7 on the 1 dB scale: 37 of 44 dB.
+  tick({ channelPeaks: [0.5, 0] });
+  expect(level("A")).toBe(String(Math.round((37 / 44) * 100)));
+  expect(level("B")).toBe("0");
+});
 
 it("toggles the assigned deck's band kill from the keyboard", async () => {
   mount({ "a.eqKillLow": { key: "z" }, "b.eqKillHigh": { key: "u" } });

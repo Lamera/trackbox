@@ -2497,8 +2497,10 @@ export function createMockBackend(options: MockOptions = {}): Backend {
     setBeatFx: () => wait(undefined),
     onControllerIntent: () => () => undefined,
     onControllerStatus: () => () => undefined,
+    onAudioDeviceLost: () => () => undefined,
     controllerStatus: () => wait({ name: null }),
     controllerLeds: () => wait(undefined),
+    setJogVinyl: () => wait(undefined),
     setEqCurve: () => wait(undefined),
     deckScrubEnd: (deck) => {
       deckOf(deck).generation += 1;

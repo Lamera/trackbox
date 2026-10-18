@@ -52,6 +52,7 @@ import { useLimiter } from "@/store/useLimiter";
 import { onPreviewError, stopPreview } from "@/store/usePreview";
 import { useUpdater } from "@/store/useUpdater";
 import { UpdateReadyNotice } from "@/views/update/UpdateReadyNotice";
+import noticeStyles from "@/views/update/UpdateReadyNotice.module.css";
 import { MasterOutputProvider, MasterOutputConnection, useMasterControls, useMasterDisplay } from "@/store/MasterOutput";
 import { asLayout, deckCount, isFullDeck, type PlayerLayout } from "@/lib/layout";
 import { asWaveformOrientation, asWorkspaceMode, layoutForWorkspace, readExportLayout, WORKSPACE_MODE_KEY, EXPORT_LAYOUT_KEY, PERFORMANCE_WAVEFORM_KEY, type WaveformOrientation, type WorkspaceMode } from "@/lib/workspaceMode";
@@ -562,6 +563,28 @@ function AppBody() {
     setWorkspaceMode(next);
     try { localStorage.setItem(WORKSPACE_MODE_KEY, next); } catch { /* Session remains usable. */ }
   }, [layout, workspaceMode]);
+  // A controller plugged in during EXPORT offers PERFORMANCE once; it never switches by itself.
+  const [controllerHint, setControllerHint] = useState<string | null>(null);
+  if (controllerHint !== null && workspaceMode === "performance") setControllerHint(null);
+  useEffect(() => {
+    let live = true;
+    let last: string | null = null;
+    let stop: (() => void) | undefined;
+    const seen = (name: string | null) => {
+      if (name !== last) setControllerHint(name);
+      last = name;
+    };
+    void getBackend().then(async (backend) => {
+      stop = backend.onControllerStatus((status) => seen(status.name));
+      const status = await backend.controllerStatus();
+      if (live) seen(status.name);
+      else stop();
+    }).catch(() => {});
+    return () => {
+      live = false;
+      stop?.();
+    };
+  }, []);
 
   const chooseLayout = useCallback((next: PlayerLayout) => {
     // Choosing an EXPORT-specific layout explicitly exits PERFORMANCE.
@@ -731,6 +754,22 @@ function AppBody() {
   jobError.current = (job, error) => refuse(error instanceof Error ? error.message : `${job.label} failed.`);
   // A waveform click whose track could not be previewed says why.
   useEffect(() => onPreviewError(refuse), [refuse]);
+  // An audio output lost mid-set says so at once, not on the next button press.
+  useEffect(() => {
+    let live = true;
+    let stop: (() => void) | undefined;
+    void getBackend().then((backend) => {
+      if (live) {
+        stop = backend.onAudioDeviceLost(() => refuse(t(
+          "The audio output went away; both decks stopped. Reconnect it, or choose another output in Preferences › Audio.",
+        )));
+      }
+    }).catch(() => {});
+    return () => {
+      live = false;
+      stop?.();
+    };
+  }, [refuse, t]);
   // Choosing another playlist in the tree stops the preview, as rekordbox's
   // `BrowseListViewer::currentBrowseChanged` does when the tree's selected
   // item changed. The row with its stop button is gone with the old list,
@@ -3276,6 +3315,14 @@ function AppBody() {
             onWhatsNew={openWhatsNew}
             onDismiss={() => setUpdateNoticeVisible(false)}
           />
+        ) : controllerHint !== null ? (
+          <aside className={noticeStyles.notice} role="status" aria-live="polite">
+            <p><strong>{t("{name} connected", { name: controllerHint })}</strong></p>
+            <button type="button" className={noticeStyles.whatsNew} onClick={() => setControllerHint(null)}>{t("Dismiss")}</button>
+            <button type="button" className={noticeStyles.restart} onClick={() => chooseWorkspaceMode("performance")}>
+              {t("Switch to PERFORMANCE")}
+            </button>
+          </aside>
         ) : null}
         backupActivity={backupJob.error || backupJob.text}
         backupProgress={backupJob.progress.running ? backupJob.progress : undefined}

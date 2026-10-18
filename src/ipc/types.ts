@@ -751,8 +751,12 @@ export interface Backend {
   /** What a connected DJ controller asks for. Returns the unsubscribe. */
   onControllerIntent(listener: (intent: ControllerIntent) => void): () => void;
   onControllerStatus(listener: (status: ControllerStatus) => void): () => void;
+  /** The chosen audio output went away mid-set; the decks have been stopped. */
+  onAudioDeviceLost(listener: (message: string) => void): () => void;
   controllerStatus(): Promise<ControllerStatus>;
   controllerLeds(deck: DeckId, leds: ControllerLeds): Promise<void>;
+  /** Vinyl: a touched jog platter scratches. Off (CDJ), it only bends. */
+  setJogVinyl(on: boolean): Promise<void>;
   /** EQ or ISOLATOR — the bottom of each band's travel, and nothing else. */
   setEqCurve(isolator: boolean): Promise<void>;
   /** Both decks now, to anchor the interface when it starts. */
@@ -1177,7 +1181,7 @@ export interface BeatFxSettings {
 
 export type ControllerButton =
   | "play" | "shiftPlay" | "cue" | "trackStart" | "sync" | "syncHold" | "tempoRange"
-  | "loopIn" | "loopOut" | "reloop" | "shiftReloop" | "callPrevious" | "callNext"
+  | "loopIn" | "loopOut" | "shiftLoopIn" | "shiftLoopOut" | "reloop" | "shiftReloop" | "callPrevious" | "callNext"
   | "shiftCallPrevious" | "shiftCallNext" | "quantize";
 
 export type PadMode =
@@ -1192,6 +1196,8 @@ export interface ControllerStatus {
 export interface ControllerLeds {
   sync?: boolean;
   hotCues?: boolean[];
+  /** The loop point the jog moves, whose button blinks. */
+  loopAdjust?: "in" | "out" | "none";
 }
 
 export interface DeckTick {
@@ -1251,6 +1257,11 @@ export interface Meters {
   master: number;
   /** How far the limiter turned the sum down since the last tick, in dB. */
   reduction: number;
+  /**
+   * Each channel's peak since the last tick, A then B, after trim and EQ and
+   * before the channel fader. Absent from engines that predate it.
+   */
+  channelPeaks?: [number, number];
 }
 
 /** A deck finishing a load, or failing one. */

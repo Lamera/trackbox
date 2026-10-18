@@ -1,6 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
+  adjustLoopPoint,
+  createLongPress,
+  LOOP_ADJUST_MIN_SECONDS,
   type BeatGrid,
   tempoAnnotations,
   beatAtMs,
@@ -926,6 +929,48 @@ describe("wrapIntoLoop", () => {
     expect(wrapIntoLoop(2, 1, 2)).toBe(1);
     expect(wrapIntoLoop(2.25, 1, 2)).toBe(1.25);
     expect(wrapIntoLoop(4.5, 1, 2)).toBe(1.5);
+  });
+});
+
+describe("adjustLoopPoint", () => {
+  it("moves the chosen end only", () => {
+    expect(adjustLoopPoint(1, 3, "in", 0.5, 10)).toEqual([1.5, 3]);
+    expect(adjustLoopPoint(1, 3, "out", -0.5, 10)).toEqual([1, 2.5]);
+  });
+  it("keeps in before out by the shortest loop", () => {
+    expect(adjustLoopPoint(1, 3, "in", 5, 10)).toEqual([3 - LOOP_ADJUST_MIN_SECONDS, 3]);
+    expect(adjustLoopPoint(1, 3, "out", -5, 10)).toEqual([1, 1 + LOOP_ADJUST_MIN_SECONDS]);
+  });
+  it("stays inside the track", () => {
+    expect(adjustLoopPoint(1, 3, "in", -5, 10)).toEqual([0, 3]);
+    expect(adjustLoopPoint(1, 3, "out", 50, 10)).toEqual([1, 10]);
+    expect(adjustLoopPoint(1, 3, "out", 50, 0)).toEqual([1, 53]);
+  });
+});
+
+describe("createLongPress", () => {
+  it("does the short action on a quick release and the long one once held", () => {
+    vi.useFakeTimers();
+    try {
+      const short = vi.fn();
+      const long = vi.fn();
+      const button = createLongPress(500, short, long);
+      button.press();
+      vi.advanceTimersByTime(499);
+      button.release();
+      expect([short.mock.calls.length, long.mock.calls.length]).toEqual([1, 0]);
+      button.press();
+      vi.advanceTimersByTime(500);
+      button.release();
+      expect([short.mock.calls.length, long.mock.calls.length]).toEqual([1, 1]);
+      button.press();
+      button.cancel();
+      vi.advanceTimersByTime(1000);
+      button.release();
+      expect([short.mock.calls.length, long.mock.calls.length]).toEqual([1, 1]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

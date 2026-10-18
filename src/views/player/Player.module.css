@@ -1095,6 +1095,16 @@ button.pageNumber:disabled { color: var(--c-icon-off); }
 .pageNumber:hover:not(:disabled) { background: #383838; }
 .pageNumber[data-on]:hover:not(:disabled) { background: #4a82ed; }
 
+/* SHIFT+LOOP IN or OUT: the loop end the jog moves blinks, as the deck's LED
+   does. By label, so DualDeck's IN and OUT blink the same way. */
+.player[data-loop-adjust="in"] button[aria-label="Loop in"],
+.player[data-loop-adjust="out"] button[aria-label="Loop out"] { animation: loopAdjust 1s steps(1) infinite; }
+@keyframes loopAdjust { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) {
+  .player[data-loop-adjust="in"] button[aria-label="Loop in"],
+  .player[data-loop-adjust="out"] button[aria-label="Loop out"] { animation: none; outline: 1px solid var(--c-pad-active); }
+}
+
 .padMenu {
   border: 0;
   background: none;
