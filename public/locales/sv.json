@@ -1734,5 +1734,15 @@
   "{match} % match": "{match} % match",
   "{name} connected": "{name} connected",
   "{percent} % tempo apart": "{percent} % tempo apart",
-  "With a DJ controller, 256 samples keeps the jog wheels tight; raise it if the dropout meter shows dropouts.": "With a DJ controller, 256 samples keeps the jog wheels tight; raise it if the dropout meter shows dropouts."
+  "With a DJ controller, 256 samples keeps the jog wheels tight; raise it if the dropout meter shows dropouts.": "With a DJ controller, 256 samples keeps the jog wheels tight; raise it if the dropout meter shows dropouts.",
+  "Choose the recordings folder": "Choose the recordings folder",
+  "Default": "Default",
+  "Music › Trackbox Recordings": "Music › Trackbox Recordings",
+  "REC": "REC",
+  "REC in the PERFORMANCE mixer records the master output, after the limiter, as 24-bit FLAC.": "REC in the PERFORMANCE mixer records the master output, after the limiter, as 24-bit FLAC.",
+  "Recording": "Recording",
+  "Recording needs the desktop app's audio engine.": "Recording needs the desktop app's audio engine.",
+  "The recording could not be started.": "The recording could not be started.",
+  "The recordings folder could not be created.": "The recordings folder could not be created.",
+  "There is no folder to record into. Choose one in Preferences › Audio.": "There is no folder to record into. Choose one in Preferences › Audio."
 }

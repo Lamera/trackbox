@@ -15,7 +15,7 @@ import type {
   DatabaseDrive, EditHistoryState, ItunesLibrary, LibraryProblem, LibrarySummary, LinkPeerSeen, Meters,
   LinkStatus, MissingExportFile, MissingTrack, MissingTracks, PreviewState, UnanalysedTracks, ReferenceStickSettings, RelocateReport, RowDto, ScriptRequest, Tick,
   TreeNode, ViewHandle,
-  SelectionDetails, TrackDetails, TrackLookups, ControllerIntent, ControllerStatus,
+  SelectionDetails, TrackDetails, TrackLookups, ControllerIntent, ControllerStatus, RecordingStatus,
 } from "./types";
 import { tauriInvoke } from "./invoke";
 
@@ -369,6 +369,10 @@ async function realBackend(): Promise<Backend> {
     onControllerIntent: (listener) => subscribe<ControllerIntent>("controller:intent", listener),
     onControllerStatus: (listener) => subscribe<ControllerStatus>("controller:status", listener),
     onAudioDeviceLost: (listener) => subscribe<string>("audio:device-lost", listener),
+    startRecording: (folder) => invoke<RecordingStatus>("start_recording", { folder }),
+    stopRecording: () => invoke<RecordingStatus | null>("stop_recording"),
+    recordingStatus: () => invoke<RecordingStatus | null>("recording_status"),
+    onRecordingStatus: (listener) => subscribe<RecordingStatus>("record:status", listener),
     controllerStatus: () => invoke<ControllerStatus>("controller_status"),
     controllerLeds: (deck, leds) => invoke<void>("controller_leds", { deck, leds }),
     setJogVinyl: (on) => invoke<void>("set_jog_vinyl", { on }),

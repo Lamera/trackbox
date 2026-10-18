@@ -16,8 +16,9 @@
  */
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { BeatFxSettings, DeckId, EqBand } from "@/ipc/types";
+import type { BeatFxSettings, DeckId, EqBand, RecordingStatus } from "@/ipc/types";
 import { getBackend } from "@/ipc/client";
+import { errorMessage } from "@/lib/errorMessage";
 import { detectPlatform, dispatchBinding, eqKillBand } from "@/lib/shortcuts";
 import { VuMeter } from "@/lib/vuMeter";
 import { useControllerIntent } from "@/store/useControllerIntent";
@@ -52,6 +53,67 @@ function trimLabel(trim: number): string {
 
 /** How long without a reading before the meter falls on its own, as the master's does. */
 const METER_SILENT_AFTER_MS = 100;
+
+/** `4:05` or `1:04:05`. */
+export function recordingClock(seconds: number): string {
+  const whole = Math.max(0, Math.floor(seconds));
+  const s = String(whole % 60).padStart(2, "0");
+  const m = Math.floor(whole / 60) % 60;
+  const h = Math.floor(whole / 3600);
+  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${s}` : `${m}:${s}`;
+}
+
+/** REC: the master, as the room hears it, to a FLAC file. */
+function RecordButton({ folder }: { folder: string | null }) {
+  const [status, setStatus] = useState<RecordingStatus | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let live = true;
+    let stop: (() => void) | undefined;
+    void getBackend().then(async (backend) => {
+      stop = backend.onRecordingStatus((next) => {
+        if (!live) return;
+        setStatus(next);
+        setError(null);
+      });
+      const current = await backend.recordingStatus();
+      if (live) setStatus(current);
+      else stop();
+    }).catch(() => {});
+    return () => {
+      live = false;
+      stop?.();
+    };
+  }, []);
+  const active = status?.active === true;
+  const toggle = () => {
+    setBusy(true);
+    setError(null);
+    void getBackend()
+      .then((backend) => (active ? backend.stopRecording() : backend.startRecording(folder)))
+      .then((next) => {
+        if (next) setStatus(next);
+      })
+      .catch((cause: unknown) => setError(errorMessage(cause)))
+      .finally(() => setBusy(false));
+  };
+  const gaps = (status?.droppedFrames ?? 0) > 0;
+  const problem = error ?? status?.error ?? (gaps ? "The disk fell behind: the recording has gaps." : null);
+  const title = active
+    ? `Recording to ${status.path}`
+    : status?.path
+      ? `Last recording: ${status.path}`
+      : "Record the master output to a FLAC file";
+  return (
+    <>
+      <button type="button" className={styles.rec} aria-pressed={active} disabled={busy} title={title} onClick={toggle}>
+        {active ? `REC ${recordingClock(status.seconds)}` : "REC"}
+      </button>
+      {problem ? <span role="alert" className={styles.recError}>{problem}</span> : null}
+    </>
+  );
+}
 
 /**
  * A channel's level, pre-fader, on the master meter's rekordbox scale
@@ -607,6 +669,7 @@ export function MixerStrip({
           >
             X-FADER
           </button>
+          <RecordButton folder={preferences.audio.recordingFolder} />
           {curveError ? <span role="alert">{curveError}</span> : null}
         </div>
       ) : null}

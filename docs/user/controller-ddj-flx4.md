@@ -150,6 +150,18 @@ Hold BEAT SYNC to make a deck the master. MASTER also moves on its own to the
 deck that is heard: when the master stops while the other deck plays, or the
 other deck starts while the master is stopped.
 
+### Recording the mix
+
+The FLX4 has no record button; use **REC** in the PERFORMANCE mixer header.
+It records the master output as the speakers get it (after the master level
+and the limiter, metronome clicks included, headphones not) to a 24-bit FLAC
+file named `Trackbox <date> <time>.flac`, in Music › Trackbox Recordings
+unless another folder is set in Preferences › Audio › Recording. While REC is
+on, the button shows the running time and the audio device stays open, so
+pauses are recorded as silence. Press REC again to finish the file. If the
+disk falls behind, the mixer says the recording has gaps; if the audio output
+changes or goes away, the recording is stopped and the file is kept.
+
 ## Behavior on the hardware
 
 ### Positions at startup

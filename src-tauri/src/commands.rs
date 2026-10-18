@@ -2666,6 +2666,33 @@ pub async fn controller_leds(
     Ok(())
 }
 
+/// Starts recording the master to a new FLAC file; progress arrives as `record:status`.
+#[tauri::command]
+pub async fn start_recording<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    player: State<'_, Arc<crate::player::Player>>,
+    folder: Option<String>,
+) -> AppResult<crate::player::RecordingDto> {
+    player.start_recording(&app, folder.filter(|f| !f.is_empty()).map(std::path::PathBuf::from))
+}
+
+/// Stops the recording and finishes the file.
+#[tauri::command]
+pub async fn stop_recording<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    player: State<'_, Arc<crate::player::Player>>,
+) -> AppResult<Option<crate::player::RecordingDto>> {
+    Ok(player.stop_recording(&app))
+}
+
+/// The recording running now, or the last one.
+#[tauri::command]
+pub async fn recording_status(
+    player: State<'_, Arc<crate::player::Player>>,
+) -> AppResult<Option<crate::player::RecordingDto>> {
+    Ok(player.recording_status())
+}
+
 /// Which controller is connected, if any; changes arrive as `controller:status`.
 #[tauri::command]
 pub async fn controller_status(

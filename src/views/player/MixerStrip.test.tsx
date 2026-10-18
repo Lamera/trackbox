@@ -4,9 +4,9 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { DEFAULT_PREFERENCES } from "@/lib/preferences";
-import type { BeatFxSettings, ControllerIntent, Meters } from "@/ipc/types";
+import type { BeatFxSettings, ControllerIntent, Meters, RecordingStatus } from "@/ipc/types";
 import { PreferencesProvider } from "@/store/usePreferences";
-import { MixerStrip } from "./MixerStrip";
+import { MixerStrip, recordingClock } from "./MixerStrip";
 
 declare global { var IS_REACT_ACT_ENVIRONMENT: boolean; }
 
@@ -23,8 +23,19 @@ const update = vi.fn();
 const intents = new Set<(intent: ControllerIntent) => void>();
 const statuses = new Set<(status: { name: string | null }) => void>();
 const meterListeners = new Set<(meters: Meters) => void>();
+const recordListeners = new Set<(status: RecordingStatus) => void>();
+const recording = (active: boolean, seconds = 0): RecordingStatus =>
+  ({ path: "/Music/Trackbox Recordings/Trackbox 1.flac", seconds, droppedFrames: 0, error: null, active });
+const startRecording = vi.fn((_folder: string | null) => Promise.resolve(recording(true)));
+const stopRecording = vi.fn(() => Promise.resolve(recording(false, 65)));
 vi.mock("@/ipc/client", () => ({
   getBackend: () => Promise.resolve({
+    startRecording, stopRecording,
+    recordingStatus: () => Promise.resolve(null),
+    onRecordingStatus: (listener: (status: RecordingStatus) => void) => {
+      recordListeners.add(listener);
+      return () => recordListeners.delete(listener);
+    },
     setChannelKill, setChannelBand, setChannelVolume, setEqCurve, setChannelCue, setChannelFilter, setHeadphoneMix,
     setCrossfaderOn, setBeatFx,
     setChannelTrim: () => Promise.resolve(), setCrossfade: () => Promise.resolve(), setJogVinyl: () => Promise.resolve(),
@@ -86,6 +97,44 @@ afterEach(() => { act(() => root.unmount()); host.remove(); });
 
 const press = (init: KeyboardEventInit) =>
   act(() => { window.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, ...init })); });
+
+it("records from REC into the chosen folder, shows the running time and stops on a second press", async () => {
+  startRecording.mockClear();
+  stopRecording.mockClear();
+  mount({}, true, { recordingFolder: "/Volumes/Sets" });
+  await act(async () => {});
+  const rec = () => [...host.querySelectorAll("button")].find((b) => b.textContent?.startsWith("REC"));
+  expect(rec()?.getAttribute("aria-pressed")).toBe("false");
+  act(() => rec()?.click());
+  await act(async () => {});
+  expect(startRecording).toHaveBeenCalledWith("/Volumes/Sets");
+  expect(rec()?.getAttribute("aria-pressed")).toBe("true");
+  act(() => { for (const listener of recordListeners) listener(recording(true, 3_725)); });
+  expect(rec()?.textContent).toBe("REC 1:02:05");
+  act(() => rec()?.click());
+  await act(async () => {});
+  expect(stopRecording).toHaveBeenCalled();
+  expect(rec()?.textContent).toBe("REC");
+  expect(rec()?.title).toContain("Trackbox 1.flac");
+});
+
+it("says when the recording could not start and when the disk left gaps", async () => {
+  startRecording.mockImplementationOnce(() => Promise.reject(new Error("The recording could not be started.")));
+  mount({}, true);
+  await act(async () => {});
+  const rec = () => [...host.querySelectorAll("button")].find((b) => b.textContent?.startsWith("REC"));
+  act(() => rec()?.click());
+  await act(async () => {});
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain("could not be started");
+  act(() => { for (const listener of recordListeners) listener({ ...recording(true, 10), droppedFrames: 512 }); });
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain("gaps");
+});
+
+it("prints a recording's length as minutes or hours", () => {
+  expect(recordingClock(0)).toBe("0:00");
+  expect(recordingClock(65.9)).toBe("1:05");
+  expect(recordingClock(3_725)).toBe("1:02:05");
+});
 
 it("meters each channel from the engine's meter tick, and stays empty without readings", async () => {
   mount({}, true);

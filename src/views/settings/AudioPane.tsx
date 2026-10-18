@@ -12,6 +12,7 @@ import { useEffect, useState } from "react";
 
 import { getBackend } from "@/ipc/client";
 import type { AudioDevices, Limiter } from "@/ipc/types";
+import { useTranslation } from "@/i18n";
 import { BUFFER_SIZES, SAMPLE_RATES, type SampleRate } from "@/lib/preferences";
 import { CEILING_DB, DEFAULT_LIMITER, INPUT_GAIN_DB, RELEASE_MS } from "@/store/useLimiter";
 import { usePreferencesContext } from "@/store/usePreferences";
@@ -61,6 +62,7 @@ const REDUCTION_FULL_DB = 12;
 export function AudioPane({ limiter, onLimiterChange, reduction, vu, peakLeft = 0, peakRight = 0 }: AudioPaneProps) {
   const [audio, setAudio] = useState<AudioDevices | null>(null);
   const { preferences, update } = usePreferencesContext();
+  const t = useTranslation();
   const prefs = preferences.audio;
   const gainReduction = limiter.enabled && Number.isFinite(reduction) ? Math.max(0, reduction) : 0;
   const limiterStatus = !limiter.enabled ? "Off" : gainReduction >= 0.1 ? "Limiting" : "Ready";
@@ -210,6 +212,32 @@ export function AudioPane({ limiter, onLimiterChange, reduction, vu, peakLeft = 
       <Note>
         Takes effect the next time a deck plays. A device with fewer than four
         outputs is opened without separate headphones.
+      </Note>
+    </Section>
+
+    <Section title="Recording">
+      <div className={styles.row} data-nested="">
+        <span data-testid="recording-folder">{prefs.recordingFolder ?? "Music › Trackbox Recordings"}</span>
+      </div>
+      <div className={styles.actions}>
+        <Button
+          onClick={() => {
+            void getBackend()
+              .then((backend) => backend.pickFolder(t("Choose the recordings folder")))
+              .then((folder) => {
+                if (folder) set({ recordingFolder: folder });
+              })
+              .catch(() => {});
+          }}
+        >
+          Change folder…
+        </Button>
+        <Button disabled={prefs.recordingFolder === null} onClick={() => set({ recordingFolder: null })}>
+          Default
+        </Button>
+      </div>
+      <Note>
+        REC in the PERFORMANCE mixer records the master output, after the limiter, as 24-bit FLAC.
       </Note>
     </Section>
 

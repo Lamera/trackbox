@@ -33,6 +33,8 @@ mod deck;
 /// Streaming decoder, also used by the close-zoom PCM waveform command.
 pub mod decode;
 mod fade;
+/// The mix recording's encoder.
+pub mod flac;
 mod fx;
 mod latency;
 pub use latency::ControlLatency;
@@ -40,6 +42,8 @@ mod limiter;
 mod metronome;
 mod meter;
 mod mixer;
+mod record;
+pub use record::{RecordingStatus, RECORD_SECONDS_BUFFERED};
 #[cfg(feature = "rubberband")]
 mod rubberband;
 mod scrub;
@@ -292,6 +296,7 @@ pub struct Engine {
     metronome: Arc<MetronomeSettings>,
     metronomes: [Arc<Metronome>; 2],
     fx: Arc<FxSettings>,
+    recorder: record::Recorder,
     /// Whether the sink was last asked to start rather than stop.
     streaming: AtomicBool,
 }
@@ -383,6 +388,7 @@ impl Engine {
         // callback for the same reason as `level`.
         let mut phones_level: Option<(Smoothed, Smoothed)> = None;
         let mut rms = meter::WindowRms::new();
+        let (mut tap, recorder) = record::channel();
         let render: Render = Box::new(move |out: &mut [f32], cue: &mut [f32]| {
             // First, so every control read below is at least as new as what
             // was measured.
@@ -486,6 +492,7 @@ impl Engine {
             mixing.rms_left.store(rms_left.to_bits(), Ordering::Relaxed);
             mixing.rms_right.store(rms_right.to_bits(), Ordering::Relaxed);
             mixing.report(left, right);
+            tap.push(out);
             // The headphones: the cue sum against the master as the device is
             // given it, so the master is never touched by what is cued.
             if phones {
@@ -539,6 +546,7 @@ impl Engine {
             metronome,
             metronomes,
             fx,
+            recorder,
             streaming: AtomicBool::new(false),
         })
     }
@@ -908,12 +916,34 @@ impl Engine {
         self.settle_device();
     }
 
+    /// Starts recording the master to a new FLAC file at `path`. The device
+    /// keeps running while it records, so pauses are in the file as silence.
+    pub fn start_recording(&self, path: &Path) -> Result<()> {
+        self.recorder
+            .start(path, self.sample_rate)
+            .map_err(|e| DeckError::Device(format!("could not start recording to {}: {e}", path.display())))?;
+        self.settle_device();
+        Ok(())
+    }
+
+    /// Stops recording and finishes the file.
+    pub fn stop_recording(&self) -> Option<RecordingStatus> {
+        let status = self.recorder.stop();
+        self.settle_device();
+        status
+    }
+
+    /// The recording running now, or the last one.
+    pub fn recording_status(&self) -> Option<RecordingStatus> {
+        self.recorder.status()
+    }
+
     /// Starts the device when a deck needs it and stops it when neither does.
     ///
     /// A stream that is left running costs a callback every 11 ms for silence,
     /// which is exactly the sort of idle cost the budget rules out.
     fn settle_device(&self) {
-        let wanted = self.any_sounding();
+        let wanted = self.any_sounding() || self.recorder.armed();
         if wanted && !self.streaming.swap(true, Ordering::AcqRel) {
             self.mixer.forget_pending();
         } else if !wanted {

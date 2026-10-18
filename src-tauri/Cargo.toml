@@ -56,6 +56,8 @@ minisign-verify = "0.2"
 uuid = { version = "1", features = ["v4"] }
 semver = "1"
 time = { version = "0.3", features = ["formatting"] }
+# The local date and time in a recording's file name.
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 # Error and panic reporting only.  Keep optional telemetry features off.
 # rustls, not native-tls: the default `transport` feature pulls in openssl on
 # Linux, which collides with rusqlite's bundled-sqlcipher-vendored-openssl and

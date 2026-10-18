@@ -2498,6 +2498,11 @@ export function createMockBackend(options: MockOptions = {}): Backend {
     onControllerIntent: () => () => undefined,
     onControllerStatus: () => () => undefined,
     onAudioDeviceLost: () => () => undefined,
+    // No audio engine behind the browser build, so nothing to record.
+    startRecording: () => Promise.reject(new Error("Recording needs the desktop app's audio engine.")),
+    stopRecording: () => wait(null),
+    recordingStatus: () => wait(null),
+    onRecordingStatus: () => () => undefined,
     controllerStatus: () => wait({ name: null }),
     controllerLeds: () => wait(undefined),
     setJogVinyl: () => wait(undefined),

@@ -753,6 +753,12 @@ export interface Backend {
   onControllerStatus(listener: (status: ControllerStatus) => void): () => void;
   /** The chosen audio output went away mid-set; the decks have been stopped. */
   onAudioDeviceLost(listener: (message: string) => void): () => void;
+  /** Records the master to a new FLAC file in `folder`, or the default one. */
+  startRecording(folder: string | null): Promise<RecordingStatus>;
+  /** Stops the recording and finishes the file; null when none was running. */
+  stopRecording(): Promise<RecordingStatus | null>;
+  recordingStatus(): Promise<RecordingStatus | null>;
+  onRecordingStatus(listener: (status: RecordingStatus) => void): () => void;
   controllerStatus(): Promise<ControllerStatus>;
   controllerLeds(deck: DeckId, leds: ControllerLeds): Promise<void>;
   /** Vinyl: a touched jog platter scratches. Off (CDJ), it only bends. */
@@ -1193,6 +1199,17 @@ export interface ControllerStatus {
 }
 
 /** The deck state only the interface knows, for the controller's LEDs. */
+/** A mix recording, running or the last one. */
+export interface RecordingStatus {
+  path: string;
+  seconds: number;
+  /** Frames lost because the disk fell behind: gaps in the file. */
+  droppedFrames: number;
+  /** Why it stopped on its own, if it did. */
+  error: string | null;
+  active: boolean;
+}
+
 export interface ControllerLeds {
   sync?: boolean;
   hotCues?: boolean[];

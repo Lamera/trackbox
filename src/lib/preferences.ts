@@ -172,6 +172,8 @@ export interface AudioPreferences {
   crossfader: boolean;
   /** A controller's jog platter scratches when touched (vinyl); off, it only bends (CDJ). */
   jogVinyl: boolean;
+  /** Where mix recordings go; null is Music › Trackbox Recordings. */
+  recordingFolder: string | null;
 }
 
 export type HeadphoneRouting = "auto" | "off" | "split" | "lanes";
@@ -323,6 +325,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
     eqCurve: "eq",
     crossfader: true,
     jogVinyl: true,
+    recordingFolder: null,
   },
   analysis: {
     mode: "rbxport",
@@ -501,6 +504,8 @@ export function sanitisePreferences(value: unknown): Preferences {
       eqCurve: oneOf(audio.eqCurve, ["eq", "isolator"] as const, d.audio.eqCurve),
       crossfader: bool(audio.crossfader, d.audio.crossfader),
       jogVinyl: bool(audio.jogVinyl, d.audio.jogVinyl),
+      recordingFolder:
+        typeof audio.recordingFolder === "string" && audio.recordingFolder !== "" ? audio.recordingFolder : null,
     },
     analysis: {
       mode: oneOf(analysis.mode, ["rekordbox", "rbxport"], d.analysis.mode),

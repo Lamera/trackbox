@@ -1822,3 +1822,48 @@ fn a_deck_that_never_runs_dry_is_never_counted_as_starved() {
     h.play_until_paced(Deck::A, u64::from(RATE) / 2);
     assert_eq!(h.engine.audio_health().starved, 0);
 }
+
+#[test]
+fn a_recording_is_the_master_as_the_device_was_given_it_pauses_included() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("tone.wav");
+    tone(&path, RATE as usize * 4);
+    let h = harness();
+    h.engine.load(Deck::A, &path);
+    h.wait_for_load(1);
+    let file = dir.path().join("mix.flac");
+
+    h.engine.start_recording(&file).unwrap();
+    assert!(h.sink.running(), "recording keeps the device running");
+    h.engine.play(Deck::A);
+    let mut master = h.play_until_paced(Deck::A, u64::from(RATE));
+    h.engine.pause(Deck::A);
+    // Paused, the room hears silence and so does the file: the time is not cut out.
+    assert!(h.sink.running(), "a paused deck stopped the recording's device");
+    for _ in 0..20 {
+        master.extend(h.sink.pull(512));
+    }
+    let status = h.engine.stop_recording().unwrap();
+    assert!(!h.sink.running(), "the device stays up after the recording ended");
+    assert_eq!(status.error, None);
+    assert_eq!(status.dropped_frames, 0);
+    let frames = master.len() / 2;
+    assert!((status.seconds - frames as f64 / f64::from(RATE)).abs() < 1e-9, "{} s for {frames} frames", status.seconds);
+
+    let mut streamer = rbl_deck::decode::Streamer::open(&file, RATE).unwrap();
+    assert_eq!(streamer.total_frames(), frames as u64);
+    let mut decoded = vec![0.0_f32; master.len()];
+    let mut read = 0;
+    while read < decoded.len() {
+        let n = streamer.fill(&mut decoded[read..]).unwrap();
+        if n == 0 {
+            break;
+        }
+        read += n * 2;
+    }
+    assert_eq!(read, master.len());
+    let worst = master.iter().zip(&decoded).map(|(a, b)| (a - b).abs()).fold(0.0_f32, f32::max);
+    // 24-bit, so one step of quantisation and nothing else.
+    assert!(worst < 2.0 / 8_388_608.0, "the file differs from the master by {worst}");
+    assert!(peak(&master) > 0.5, "nothing was played into the recording");
+}

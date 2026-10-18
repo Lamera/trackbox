@@ -12,6 +12,7 @@
 //! frame counter. Sixty ticks a second per deck would be pure IPC churn, and
 //! the interface would still have to interpolate to draw a smooth playhead.
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -454,6 +455,106 @@ impl Player {
     pub fn ticking(&self) -> &std::sync::atomic::AtomicBool {
         &self.ticking
     }
+
+    /// Starts recording the master into `folder` (or the default one) and
+    /// reports on it as `record:status` until it ends.
+    pub fn start_recording<R: Runtime>(&self, app: &AppHandle<R>, folder: Option<PathBuf>) -> AppResult<RecordingDto> {
+        let engine = self.engine(app)?;
+        let folder = folder.or_else(default_recording_folder).ok_or_else(|| {
+            AppError::new(ErrorKind::NotFound, "There is no folder to record into. Choose one in Preferences › Audio.")
+        })?;
+        std::fs::create_dir_all(&folder).map_err(|e| {
+            AppError::new(ErrorKind::NotFound, "The recordings folder could not be created.").with_detail(e.to_string())
+        })?;
+        let path = recording_path(&folder);
+        engine.start_recording(&path).map_err(|e| {
+            AppError::new(ErrorKind::Internal, "The recording could not be started.").with_detail(e.to_string())
+        })?;
+        let weak = Arc::downgrade(&engine);
+        let handle = app.clone();
+        let spawned = std::thread::Builder::new().name("record-status".to_owned()).spawn(move || loop {
+            std::thread::sleep(RECORD_STATUS_EVERY);
+            let Some(engine) = weak.upgrade() else {
+                // The engine went with its device; dropping it finished the file.
+                let _ = handle.emit(
+                    "record:status",
+                    RecordingDto::ended("The audio output changed, so the recording was stopped and saved."),
+                );
+                break;
+            };
+            let Some(status) = engine.recording_status() else { break };
+            let _ = handle.emit("record:status", RecordingDto::from(&status));
+            if !status.active {
+                break;
+            }
+        });
+        if let Err(e) = spawned {
+            tracing::warn!(error = %e, "no status thread for the recording");
+        }
+        engine
+            .recording_status()
+            .map(|status| RecordingDto::from(&status))
+            .ok_or_else(|| AppError::internal("a started recording has no status"))
+    }
+
+    /// Stops the recording, if one runs, and finishes the file.
+    pub fn stop_recording<R: Runtime>(&self, app: &AppHandle<R>) -> Option<RecordingDto> {
+        let status = self.opened()?.stop_recording().map(|status| RecordingDto::from(&status))?;
+        let _ = app.emit("record:status", &status);
+        Some(status)
+    }
+
+    pub fn recording_status(&self) -> Option<RecordingDto> {
+        self.opened()?.recording_status().map(|status| RecordingDto::from(&status))
+    }
+}
+
+const RECORD_STATUS_EVERY: Duration = Duration::from_millis(500);
+
+/// A recording, for the interface.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordingDto {
+    pub path: String,
+    pub seconds: f64,
+    pub dropped_frames: u64,
+    pub error: Option<String>,
+    pub active: bool,
+}
+
+impl RecordingDto {
+    fn ended(error: &str) -> Self {
+        Self { path: String::new(), seconds: 0.0, dropped_frames: 0, error: Some(error.to_owned()), active: false }
+    }
+}
+
+impl From<&rbl_deck::RecordingStatus> for RecordingDto {
+    fn from(status: &rbl_deck::RecordingStatus) -> Self {
+        Self {
+            path: status.path.display().to_string(),
+            seconds: status.seconds,
+            dropped_frames: status.dropped_frames,
+            error: status.error.clone(),
+            active: status.active,
+        }
+    }
+}
+
+fn default_recording_folder() -> Option<PathBuf> {
+    let music = dirs::audio_dir().or_else(|| dirs::home_dir().map(|home| home.join("Music")))?;
+    Some(music.join("Trackbox Recordings"))
+}
+
+/// `Trackbox 2026-10-18 21-30-05.flac`, numbered if that second is taken.
+fn recording_path(folder: &Path) -> PathBuf {
+    let stamp = chrono::Local::now().format("%Y-%m-%d %H-%M-%S");
+    let mut path = folder.join(format!("Trackbox {stamp}.flac"));
+    let mut n = 2;
+    while path.exists() {
+        path = folder.join(format!("Trackbox {stamp} ({n}).flac"));
+        n += 1;
+    }
+    path
 }
 
 fn emit_deck_event<R: Runtime>(app: &AppHandle<R>, event: &DeckEvent) {

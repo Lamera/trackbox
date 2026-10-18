@@ -185,6 +185,18 @@
   color: var(--c-accent);
   border-color: var(--c-accent);
 }
+.mixerHeader .rec { font-variant-numeric: tabular-nums; }
+.mixerHeader .rec[aria-pressed="true"] {
+  background: var(--c-error);
+  border-color: var(--c-error);
+  color: var(--c-on-error);
+}
+.mixerHeader .rec:disabled { cursor: default; opacity: 0.6; }
+.recError {
+  flex-basis: 100%;
+  color: var(--c-error);
+  font-weight: 400;
+}
 .beatFx {
   display: flex;
   flex-wrap: wrap;
