@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { getBackend } from "@/ipc/client";
 import type { DeckId, PadMode } from "@/ipc/types";
@@ -13,9 +13,11 @@ import { useEventCallback } from "@/store/useEventCallback";
 export function usePadFx(deck: DeckId, trackId: string | null, playingBpmX100: number) {
   const held = useRef<HeldPad[]>([]);
   const beatMs = useRef(0);
+  const [heard, setHeard] = useState<HeldPad | null>(null);
   const apply = useEventCallback((next: HeldPad[]) => {
     const before = heardPadFx(held.current);
     held.current = next;
+    setHeard(next.at(-1) ?? null);
     const fx = heardPadFx(next);
     if (fx === before) return;
     void getBackend().then((backend) => backend.setPadFx(deck, fx, beatMs.current)).catch(() => {});
@@ -40,5 +42,5 @@ export function usePadFx(deck: DeckId, trackId: string | null, playingBpmX100: n
       stop?.();
     };
   }, [releaseAll]);
-  return { press, release };
+  return { press, release, heard };
 }

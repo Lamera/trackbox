@@ -425,7 +425,7 @@ export const READOUT_COLUMNS: readonly SortColumn[] = ["key", "bpm"];
 export type PadMode = "cue" | "grid";
 
 /** Which list the panel beside the deck is showing. */
-export type CuePanel = "memory" | "hotCue" | "info";
+export type CuePanel = "memory" | "hotCue" | "pads" | "info";
 
 /**
  * The cues one panel tab lists.
@@ -438,7 +438,7 @@ export function cuesFor<T extends { memory: boolean; positionMs: number }>(
   cues: readonly T[],
   panel: CuePanel,
 ): T[] {
-  if (panel === "info") return [];
+  if (panel === "info" || panel === "pads") return [];
   const want = panel === "memory";
   return cues.filter((cue) => cue.memory === want).sort((a, b) => a.positionMs - b.positionMs);
 }

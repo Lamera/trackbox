@@ -100,10 +100,17 @@ switched by the hardware; SHIFT + a mode button selects the second mode.
 | --- | --- | --- |
 | HOT CUE | Set hot cue A–H on an empty pad, call it on a set pad. | Delete that hot cue. |
 | BEAT LOOP (SHIFT + BEAT JUMP) | Loop of 1/4, 1/2, 1, 2, 4, 8, 16, 32 beats. The active length again exits the loop. | Same as without SHIFT. |
-| BEAT JUMP | Odd pads jump back, even pads forward: 1, 1, 2, 2, 4, 4, 8, 8 beats. | Same as without SHIFT. |
+| BEAT JUMP | Odd pads jump back, even pads forward: 1, 1, 2, 2, 4, 4, 8, 8 beats. In an active loop the loop moves with the jump (LOOP MOVE). | Same as without SHIFT. |
 | KEY SHIFT (SHIFT + SAMPLER) | Key 0, +1, +2, +3, −3, −2, −1, 0 semitones. | Same as without SHIFT. |
 | PAD FX1, PAD FX2 | A pad effect while the pad is held; see [PAD FX](#pad-fx). | Same as without SHIFT. |
-| SAMPLER, KEYBOARD | Not mapped. | Not mapped. |
+| SAMPLER, KEYBOARD | Not mapped. SAMPLER is planned to control stems. | Not mapped. |
+
+The screen follows the pad mode buttons: HOT CUE opens the deck's HOT CUE tab,
+every other mode opens the PADS tab beside it (named after the mode), which
+shows the eight pads as on the hardware: the effects of PAD FX1/FX2 with the
+sounding one highlighted, the jump sizes of BEAT JUMP (with a LOOP MOVE note
+in a loop), the loop lengths of BEAT LOOP and the semitones of KEY SHIFT. The
+pads there work with the mouse too; a PAD FX pad sounds while it is held.
 
 Pad LEDs by mode:
 

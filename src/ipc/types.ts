@@ -1167,6 +1167,8 @@ export type ControllerIntent =
   | { type: "tempo"; deck: DeckId; value: number }
   | { type: "button"; deck: DeckId; button: ControllerButton; pressed: boolean }
   | { type: "pad"; deck: DeckId; mode: PadMode; pad: number; shift: boolean; pressed: boolean }
+  /** A pad mode button: the screen shows that mode's pads. */
+  | { type: "padMode"; deck: DeckId; mode: PadMode }
   | { type: "browse"; steps: number }
   | { type: "browsePress"; shift: boolean }
   | { type: "load"; deck: DeckId }

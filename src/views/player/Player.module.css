@@ -1237,6 +1237,29 @@ button.cueDelete:disabled { color: var(--c-icon-off); }
   background: color-mix(in srgb, var(--cue-colour, var(--c-pad-set)) 28%, var(--c-cue-row));
 }
 .hotCueGrid .cueRow[data-empty] { opacity: 0.55; }
+/* A pad that is sounding or chosen: the accent, as a pressed tab. */
+.hotCueGrid .cueRow[data-on] {
+  border-left-color: var(--c-accent);
+  background: color-mix(in srgb, var(--c-accent) 30%, var(--c-cue-row));
+}
+/* The PADS tab: the mode, a line about it when there is one, the eight pads. */
+.padPanel {
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  min-height: 0;
+}
+.padModes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 4px 4px 0;
+}
+.padModes .sideTab { flex: 1 1 30%; padding: 3px 0; }
+.padNote {
+  margin: 4px 6px 0;
+  font-size: var(--f-size-xs);
+  color: var(--c-text-dim);
+}
 .cueLoop {
   flex: none;
   font-weight: 700;

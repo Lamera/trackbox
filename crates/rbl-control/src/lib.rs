@@ -115,6 +115,8 @@ pub enum Intent {
     Button { deck: Deck, button: Button, pressed: bool },
     /// `pad` is 0 to 7, left to right and top row first.
     Pad { deck: Deck, mode: PadMode, pad: u8, shift: bool, pressed: bool },
+    /// A pad mode button: what the pads do from now on, for the screen to show.
+    PadMode { deck: Deck, mode: PadMode },
     JogTouch { deck: Deck, touched: bool },
     /// Signed, in the wheel's own ticks; positive is clockwise.
     Jog { deck: Deck, mode: JogMode, ticks: i32 },

@@ -110,6 +110,7 @@ import { DualControls, DualHead } from "./DualDeck";
 import { READ_ONLY_REASON, useMemoryCues } from "./useMemoryCues";
 import { useHotCues } from "./useHotCues";
 import { usePadFx } from "./usePadFx";
+import { padFxFor, padFxLabel } from "@/lib/padFx";
 import { useCueWriter } from "./useCueWriter";
 import { CueColorMenu } from "./CueColorMenu";
 import styles from "./Player.module.css";
@@ -811,8 +812,22 @@ const MEMORY_ROWS = 10;
 const PANELS = [
   { id: "memory", label: "MEMORY" },
   { id: "hotCue", label: "HOT CUE" },
+  { id: "pads", label: "PADS" },
   { id: "info", label: "INFO" },
 ] as const;
+
+/** The pad modes the PADS tab shows; HOT CUE has a tab of its own. */
+type ShownPadMode = Exclude<ControllerPadMode, "hotCue">;
+const PAD_MODE_LABELS: Record<ShownPadMode, string> = {
+  padFx1: "PAD FX1",
+  padFx2: "PAD FX2",
+  beatJump: "BEAT JUMP",
+  beatLoop: "BEAT LOOP",
+  keyShift: "KEY SHIFT",
+  sampler: "STEMS",
+  keyboard: "KEYBOARD",
+};
+const SHOWN_PAD_MODES = Object.keys(PAD_MODE_LABELS) as ShownPadMode[];
 
 /** A cue's name in the cue list: blank when it has none, edited in place on a double-click. */
 function CueName({ cue, renaming, setRenaming, canEdit, onSave }: {
@@ -935,6 +950,7 @@ export const Player = memo(function Player({
   );
   const [padMode, setPadMode] = useState<PadMode>("cue");
   const [panel, setPanel] = useState<CuePanel>("hotCue");
+  const [shownPadMode, setShownPadMode] = useState<ShownPadMode>("padFx1");
   const [renamingCue, setRenamingCue] = useState<{ id: string; text: string } | null>(null);
   const [cueColorMenu, setCueColorMenu] = useState<{x: number; y: number; cue: Cue} | null>(null);
   const writeCue = useCueWriter(onError);
@@ -1262,14 +1278,29 @@ export const Player = memo(function Player({
   });
   const seekInPhase = useCallback((at: number) => playback.seek(inPhase(at)), [playback, inPhase]);
 
+  /** A jump in track time; inside a playing loop the loop moves with the head (LOOP MOVE). */
+  const moveBy = useCallback((seconds: number) => {
+    const loop = playback.loop;
+    if (!loop?.active) {
+      seekInPhase(playback.positionRef.current + seconds);
+      return;
+    }
+    const end = playback.duration > 0 ? playback.duration : Infinity;
+    const delta = Math.min(Math.max(seconds, -loop.inSeconds), end - loop.outSeconds);
+    if (delta === 0) return;
+    const head = playback.positionNow();
+    playback.setLoop(loop.inSeconds + delta, loop.outSeconds + delta);
+    playback.seek(head + delta);
+  }, [playback, seekInPhase]);
+
   /** Moves by the chosen size: a number of beats, or the fine nudge. */
   const jump = useCallback(
     (direction: number) => {
       const step = jumpStepSeconds(jumpSizeById(jumpSizeId), bpmX100);
       if (step === 0) return;
-      seekInPhase(playback.positionRef.current + step * direction);
+      moveBy(step * direction);
     },
-    [jumpSizeId, bpmX100, playback, seekInPhase],
+    [jumpSizeId, bpmX100, moveBy],
   );
 
 
@@ -2196,7 +2227,7 @@ export const Player = memo(function Player({
       case "beatJump": {
         const beats = PAD_JUMP_BEATS[pad];
         if (beats === undefined || bpmX100 <= 0) return;
-        seekInPhase(playback.positionRef.current + (pad % 2 === 0 ? -beats : beats) * 6000 / bpmX100);
+        moveBy((pad % 2 === 0 ? -beats : beats) * 6000 / bpmX100);
         return;
       }
       case "keyShift": {
@@ -2212,6 +2243,33 @@ export const Player = memo(function Player({
       default: return;
     }
   };
+  /** What one pad of the PADS tab shows, and whether it can be pressed. */
+  const padCell = (mode: ShownPadMode, pad: number) => {
+    const noBeat = playback.idle || bpmX100 <= 0;
+    switch (mode) {
+      case "padFx1":
+      case "padFx2": {
+        const fx = padFxFor(mode, pad);
+        return { chip: String(pad + 1), label: fx ? padFxLabel(fx) : "", on: fx !== null && padFx.heard?.fx === fx, disabled: noBeat };
+      }
+      case "beatJump": {
+        const beats = PAD_JUMP_BEATS[pad] ?? 0;
+        return { chip: pad % 2 === 0 ? "◀" : "▶", label: `${pad % 2 === 0 ? "−" : "+"}${beats}`, on: false, disabled: noBeat };
+      }
+      case "beatLoop": {
+        const beats = PAD_LOOP_BEATS[pad] ?? 0;
+        return { chip: String(pad + 1), label: loopBeatsLabel(beats), on: activeLoop && loopBeats === beats, disabled: noBeat };
+      }
+      case "keyShift": {
+        const shift = PAD_KEY_SHIFTS[pad] ?? 0;
+        const label = shift > 0 ? `+${shift}` : shift < 0 ? `−${-shift}` : "±0";
+        return { chip: String(pad + 1), label, on: !playback.idle && playback.keyShift === shift, disabled: playback.idle || !playback.shiftsKey };
+      }
+      default:
+        return { chip: String(pad + 1), label: "", on: false, disabled: true };
+    }
+  };
+  const padHeld = (mode: ShownPadMode) => mode === "padFx1" || mode === "padFx2";
   // The platter under the hand drags the deck exactly as the mouse on the
   // waveform does, so the waveform follows the hand frame by frame.
   const jog = useRef<{
@@ -2279,6 +2337,15 @@ export const Player = memo(function Player({
     // Any pad let go, in any mode: a held PAD FX pad ends whatever the mode is now.
     if (intent.type === "pad" && !intent.pressed) {
       padFx.release(intent.pad);
+      return;
+    }
+    // The screen follows the pad mode buttons, loaded or not.
+    if (intent.type === "padMode") {
+      if (intent.mode === "hotCue") setPanel("hotCue");
+      else {
+        setShownPadMode(intent.mode);
+        setPanel("pads");
+      }
       return;
     }
     if (playback.idle) return;
@@ -3208,6 +3275,74 @@ export const Player = memo(function Player({
               );
             })}
           </div>
+        ) : panel === "pads" ? (
+          <div className={styles.padPanel}>
+            <div className={styles.padModes} role="tablist" aria-label="Pad mode">
+              {SHOWN_PAD_MODES.map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  role="tab"
+                  aria-selected={shownPadMode === mode}
+                  className={styles.sideTab}
+                  data-on={shownPadMode === mode || undefined}
+                  onClick={() => setShownPadMode(mode)}
+                >
+                  {PAD_MODE_LABELS[mode]}
+                </button>
+              ))}
+            </div>
+            {shownPadMode === "sampler" ? (
+              <p className={styles.padNote}>STEMS on the pads are planned for a later version.</p>
+            ) : shownPadMode === "keyboard" ? (
+              <p className={styles.padNote}>KEYBOARD is not supported yet.</p>
+            ) : shownPadMode === "beatJump" && activeLoop ? (
+              <p className={styles.padNote}>LOOP MOVE: a jump moves the loop.</p>
+            ) : null}
+            <div className={`${styles.cueList} ${styles.hotCueGrid}`}>
+              {Array.from({ length: 8 }, (_, pad) => {
+                const cell = padCell(shownPadMode, pad);
+                const held = padHeld(shownPadMode);
+                const press = () => {
+                  if (cell.disabled) return;
+                  if (held) padFx.press(shownPadMode, pad);
+                  else controllerPad(shownPadMode, pad, false);
+                };
+                const release = () => { if (held) padFx.release(pad); };
+                return (
+                  <div
+                    key={pad}
+                    role="button"
+                    tabIndex={cell.disabled ? -1 : 0}
+                    className={styles.cueRow}
+                    aria-label={`${PAD_MODE_LABELS[shownPadMode]} pad ${pad + 1}`}
+                    aria-disabled={cell.disabled || undefined}
+                    aria-pressed={cell.on}
+                    data-empty={cell.disabled ? "" : undefined}
+                    data-on={cell.on || undefined}
+                    onPointerDown={(event) => {
+                      if (held) event.currentTarget.setPointerCapture(event.pointerId);
+                      press();
+                    }}
+                    onPointerUp={release}
+                    onPointerCancel={release}
+                    onKeyDown={(event) => {
+                      if ((event.key === "Enter" || event.key === " ") && !event.repeat) {
+                        event.preventDefault();
+                        press();
+                      }
+                    }}
+                    onKeyUp={(event) => {
+                      if (event.key === "Enter" || event.key === " ") release();
+                    }}
+                  >
+                    <span className={styles.cueChip} data-set={cell.on ? "" : undefined}>{cell.chip}</span>
+                    <span className={styles.cueName}>{cell.label}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         ) : (
           <div className={styles.cueList}>
             {cuesFor(cues, panel).map((cue) => (
@@ -3275,7 +3410,7 @@ export const Player = memo(function Player({
               data-on={panel === tab.id || undefined}
               onClick={() => setPanel(tab.id)}
             >
-              {tab.label}
+              {tab.id === "pads" ? PAD_MODE_LABELS[shownPadMode] : tab.label}
             </button>
           ))}
         </div>

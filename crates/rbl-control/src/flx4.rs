@@ -121,12 +121,23 @@ impl Flx4 {
     fn note(&mut self, channel: u8, note: u8, pressed: bool) -> Option<Intent> {
         if let Some(deck) = deck_of(channel) {
             if PAD_MODES.contains(&note) {
-                if pressed {
-                    if let Some(mode) = self.pad_modes.get_mut(deck.index()) {
-                        *mode = note;
-                    }
+                if !pressed {
+                    return None;
                 }
-                return None;
+                if let Some(mode) = self.pad_modes.get_mut(deck.index()) {
+                    *mode = note;
+                }
+                let mode = match note {
+                    0x69 => PadMode::Keyboard,
+                    0x1E => PadMode::PadFx1,
+                    0x6B => PadMode::PadFx2,
+                    0x20 => PadMode::BeatJump,
+                    0x6D => PadMode::BeatLoop,
+                    0x22 => PadMode::Sampler,
+                    0x6F => PadMode::KeyShift,
+                    _ => PadMode::HotCue,
+                };
+                return Some(Intent::PadMode { deck, mode });
             }
             let button = match note {
                 0x0B => Button::Play,
@@ -551,8 +562,10 @@ mod tests {
         assert_eq!(fader(&mut flx, 0xB4, 0x02, 0x3FFF), Some(Intent::FxDepth { value: 1.0 }));
         assert_eq!(fader(&mut flx, 0xB5, 0x02, 0x2000), Some(Intent::FxDepth { value: 8192.0 / 16_383.0 }));
         assert_eq!(flx.pad_mode(Deck::B), 0x1B);
-        assert_eq!(flx.decode(&[0x91, 0x6D, 0x7F]), None);
+        assert_eq!(flx.decode(&[0x91, 0x6D, 0x7F]), Some(Intent::PadMode { deck: Deck::B, mode: PadMode::BeatLoop }));
+        assert_eq!(flx.decode(&[0x91, 0x6D, 0x00]), None);
         assert_eq!(flx.pad_mode(Deck::B), 0x6D);
+        assert_eq!(flx.decode(&[0x90, 0x22, 0x7F]), Some(Intent::PadMode { deck: Deck::A, mode: PadMode::Sampler }));
     }
 
     #[test]

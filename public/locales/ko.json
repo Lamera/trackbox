@@ -1754,5 +1754,9 @@
   "Smart CFX: low pass + echo ← → high pass + echo": "Smart CFX: low pass + echo ← → high pass + echo",
   "Smart CFX: low pass + noise ← → high pass + noise": "Smart CFX: low pass + noise ← → high pass + noise",
   "Smart CFX: low pass + reverb ← → high pass + reverb": "Smart CFX: low pass + reverb ← → high pass + reverb",
-  "Smart CFX: the CFX knobs add the chosen effect to the filter": "Smart CFX: the CFX knobs add the chosen effect to the filter"
+  "Smart CFX: the CFX knobs add the chosen effect to the filter": "Smart CFX: the CFX knobs add the chosen effect to the filter",
+  "KEYBOARD is not supported yet.": "KEYBOARD is not supported yet.",
+  "LOOP MOVE: a jump moves the loop.": "LOOP MOVE: a jump moves the loop.",
+  "PADS": "PADS",
+  "STEMS on the pads are planned for a later version.": "STEMS on the pads are planned for a later version."
 }

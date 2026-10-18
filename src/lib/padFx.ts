@@ -38,3 +38,15 @@ export function releasePad(held: readonly HeldPad[], pad: number): HeldPad[] {
 export function heardPadFx(held: readonly HeldPad[]): PadFx | null {
   return held.at(-1)?.fx ?? null;
 }
+
+/** `ECHO 1/4`, `REVERB L`, `HPF`: what a pad says on screen. */
+export function padFxLabel(fx: PadFx): string {
+  const beats = fx.beats >= 1 ? String(fx.beats) : `1/${Math.round(1 / fx.beats)}`;
+  switch (fx.kind) {
+    case "reverb": return fx.beats > 1 ? "REVERB L" : "REVERB S";
+    case "hpf": return "HPF";
+    case "lpf": return "LPF";
+    case "crush": return "CRUSH";
+    default: return `${fx.kind.toUpperCase()} ${beats}`;
+  }
+}
