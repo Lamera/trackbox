@@ -41,6 +41,7 @@ import { trafficLightLit, type TrafficLightReach } from "@/lib/camelot";
 import { TickIcon } from "@/components/icons";
 import type { TrafficLightSource } from "@/lib/session";
 import { usePreferences, useTooltip } from "@/store/usePreferences";
+import { useTranslation } from "@/i18n";
 import { useControllerIntent } from "@/store/useControllerIntent";
 import type { KeyDisplay } from "@/ipc/types";
 import { ColumnMenu } from "./ColumnMenu";
@@ -931,6 +932,7 @@ export const TrackTable = memo(function TrackTable({
   const preferences = usePreferences();
   const { keyDisplay, previewCueMarkers, tooltips } = preferences.view;
   const tip = useTooltip();
+  const t = useTranslation();
   // The Key cell's list, fetched the first time one opens so the table does
   // not ask for it at startup.
   const [keyChoices, setKeyChoices] = useState<readonly string[] | null>(null);
@@ -1578,7 +1580,7 @@ export const TrackTable = memo(function TrackTable({
           {renamingColumn === col.key && onColumnRename ? (
             <input
               className={styles.headInput}
-              aria-label={`Rename ${col.label}`}
+              aria-label={t("Rename {column}", { column: col.label })}
               defaultValue={col.label}
               maxLength={MAX_COLUMN_LABEL}
               placeholder="Empty: the column's own name"
@@ -1616,7 +1618,7 @@ export const TrackTable = memo(function TrackTable({
           />
         </div>
       )),
-    [columns, spec.sort, onSortChange, sortIndicator, dragKey, renamingColumn, onColumnRename],
+    [columns, spec.sort, onSortChange, sortIndicator, dragKey, renamingColumn, onColumnRename, t],
   );
 
   return (

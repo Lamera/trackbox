@@ -19,7 +19,7 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 /** Shown while a controller's knob has not been moved: the hardware cannot report where it is. */
-const PENDING_TITLE = "Not yet read from the controller: move it there to take it over";
+const PENDING_HINT = "Not yet read from the controller: move it there to take it over";
 
 export interface KnobProps {
   label: string;
@@ -64,7 +64,7 @@ export function Knob({
         aria-valuemax={max}
         aria-valuenow={Number(value.toFixed(2))}
         aria-valuetext={valueText}
-        title={pending ? PENDING_TITLE : title}
+        title={pending ? PENDING_HINT : title}
         data-pending={pending || undefined}
         onPointerDown={(event) => {
           event.currentTarget.setPointerCapture(event.pointerId);
@@ -131,7 +131,7 @@ export function Fader({
       aria-valuemax={1}
       aria-valuenow={Number(at.toFixed(2))}
       aria-valuetext={valueText}
-      title={pending ? PENDING_TITLE : title}
+      title={pending ? PENDING_HINT : title}
       data-pending={pending || undefined}
       onPointerDown={(event) => {
         event.currentTarget.setPointerCapture(event.pointerId);

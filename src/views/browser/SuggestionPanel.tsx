@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Artwork } from "@/components/Artwork";
+import { useTranslation } from "@/i18n";
 import type { Backend, DeckId, KeyDisplay, RelatedCriterion, RowDto } from "@/ipc/types";
 import { dragTracksToDesktop, getBackend, nativeTrackDragging } from "@/ipc/client";
 import { formatBpm } from "@/lib/format";
@@ -59,6 +60,7 @@ export function SuggestionPanel({
   const [error, setError] = useState<string | null>(null);
   const [cursor, setCursor] = useState(0);
   const list = useRef<HTMLOListElement>(null);
+  const t = useTranslation();
   const id = reference?.id ?? null;
 
   useEffect(() => {
@@ -82,9 +84,9 @@ export function SuggestionPanel({
 
   const ranked = useMemo(
     () => (reference && found?.id === reference.id
-      ? rankSuggestions(reference, found.rows, found.followed, new Set(exclude))
+      ? rankSuggestions(reference, found.rows, found.followed, new Set(exclude), t)
       : []),
-    [reference, found, exclude],
+    [reference, found, exclude, t],
   );
   // Into the deck that is not playing the reference.
   const target = decks.find((deck) => deck !== reference?.deck) ?? decks[0] ?? "a";
@@ -166,7 +168,7 @@ export function SuggestionPanel({
               setRowDragImage(event.currentTarget, event.dataTransfer, { x: event.clientX, y: event.clientY });
             }}
             onDragEnd={() => onDragTracks?.(null)}
-            title={`Double-click or drag onto a deck to load; double-click loads onto deck ${target.toUpperCase()}`}
+            title={t("Double-click or drag onto a deck to load; double-click loads onto deck {deck}", { deck: target.toUpperCase() })}
           >
             <Sleeve row={row} className={styles.sleeve} />
             <div className={styles.text}>
@@ -175,7 +177,7 @@ export function SuggestionPanel({
               <span className={styles.reasons}>{reasons.join(" · ")}</span>
             </div>
             <div className={styles.meta}>
-              <span className={styles.match} aria-label={`${match} % match`}>{match}%</span>
+              <span className={styles.match} aria-label={t("{match} % match", { match })}>{match}%</span>
               <span className={styles.key}>{formatKey(row.key, keyDisplay)}</span>
               <span className={styles.bpm}>{row.bpmX100 > 0 ? formatBpm(row.bpmX100) : "—"}</span>
             </div>

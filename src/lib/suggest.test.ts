@@ -10,15 +10,18 @@ const row = (id: string, key: string, bpmX100: number, extra: Partial<RowDto> = 
 });
 
 const reference = { id: "ref", key: "Am", bpmX100: 12_800, genre: "House", artist: "X" };
+const t = (text: string, values?: Readonly<Record<string, string | number>>) =>
+  text.replace(/\{(\w+)\}/g, (_, key: string) => String(values?.[key] ?? `{${key}}`));
 
 describe("keyMatch", () => {
   it("ranks the wheel's moves", () => {
-    expect(keyMatch("Am", "Am").score).toBe(1);
-    expect(keyMatch("C", "Am").reason).toBe("Relative key");
-    expect(keyMatch("Em", "Am").score).toBe(0.85);
-    expect(keyMatch("G", "Am").score).toBe(0.6);
-    expect(keyMatch("Bm", "Am").score).toBe(0.5);
-    expect(keyMatch("Ebm", "Am").score).toBe(0);
+    expect(keyMatch("Am", "Am", t).score).toBe(1);
+    expect(keyMatch("C", "Am", t).reason).toBe("Relative key");
+    expect(keyMatch("Em", "Am", t).score).toBe(0.85);
+    expect(keyMatch("Em", "Am", t).reason).toBe("9A: one step round the wheel");
+    expect(keyMatch("G", "Am", t).score).toBe(0.6);
+    expect(keyMatch("Bm", "Am", t).score).toBe(0.5);
+    expect(keyMatch("Ebm", "Am", t).score).toBe(0);
   });
 });
 
@@ -39,13 +42,13 @@ describe("rankSuggestions", () => {
       row("best", "Am", 12_800, { genre: "house" }),
       row("loaded", "Am", 12_800),
       row("ref", "Am", 12_800),
-    ], new Set(), new Set(["loaded"]));
+    ], new Set(), new Set(["loaded"]), t);
     expect(ranked.map((s) => s.row.id)).toEqual(["best", "ok"]);
     expect(ranked[0]?.reasons).toContain("Same genre");
   });
 
   it("lifts what followed it in past sets", () => {
-    const ranked = rankSuggestions(reference, [row("a", "Em", 12_800), row("b", "Em", 12_800)], new Set(["b"]), new Set());
+    const ranked = rankSuggestions(reference, [row("a", "Em", 12_800), row("b", "Em", 12_800)], new Set(["b"]), new Set(), t);
     expect(ranked[0]?.row.id).toBe("b");
     expect(ranked[0]?.reasons).toContain("Followed it in your past sets");
   });

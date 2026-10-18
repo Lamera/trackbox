@@ -6,6 +6,9 @@
 import type { RowDto } from "@/ipc/types";
 import { toCamelot } from "./camelot";
 
+/** `useTranslation()`'s function. */
+type Translate = (text: string, values?: Readonly<Record<string, string | number>>) => string;
+
 export interface SuggestionReference {
   id: string;
   /** The key it sounds in, key shift included. */
@@ -27,7 +30,7 @@ export interface Suggestion {
 const BPM_REACH_PERCENT = 8;
 
 /** How a key mixes out of another, 0 to 1, and why. */
-export function keyMatch(key: string, reference: string): { score: number; reason: string | null } {
+export function keyMatch(key: string, reference: string, t: Translate): { score: number; reason: string | null } {
   const ours = toCamelot(reference);
   const theirs = toCamelot(key);
   if (!ours || !theirs) return { score: 0.3, reason: null };
@@ -35,13 +38,13 @@ export function keyMatch(key: string, reference: string): { score: number; reaso
   const m = Number(theirs.slice(0, -1));
   const sameLetter = ours.slice(-1) === theirs.slice(-1);
   const step = ((m - n + 12) % 12);
-  if (step === 0) return sameLetter ? { score: 1, reason: "Same key" } : { score: 0.9, reason: "Relative key" };
+  if (step === 0) return sameLetter ? { score: 1, reason: t("Same key") } : { score: 0.9, reason: t("Relative key") };
   if (step === 1 || step === 11) {
     return sameLetter
-      ? { score: 0.85, reason: `${theirs}: one step round the wheel` }
-      : { score: 0.6, reason: `${theirs}: diagonal mix` };
+      ? { score: 0.85, reason: t("{key}: one step round the wheel", { key: theirs }) }
+      : { score: 0.6, reason: t("{key}: diagonal mix", { key: theirs }) };
   }
-  if (step === 2 && sameLetter) return { score: 0.5, reason: `${theirs}: energy boost` };
+  if (step === 2 && sameLetter) return { score: 0.5, reason: t("{key}: energy boost", { key: theirs }) };
   return { score: 0, reason: null };
 }
 
@@ -63,6 +66,7 @@ export function rankSuggestions(
   candidates: readonly RowDto[],
   followed: ReadonlySet<string>,
   exclude: ReadonlySet<string>,
+  t: Translate,
   limit = 30,
 ): Suggestion[] {
   const seen = new Set<string>();
@@ -71,21 +75,21 @@ export function rankSuggestions(
     if (row.id === reference.id || exclude.has(row.id) || row.missing === true || seen.has(row.id)) continue;
     seen.add(row.id);
     const reasons: string[] = [];
-    const key = keyMatch(row.key, reference.key);
+    const key = keyMatch(row.key, reference.key, t);
     if (key.reason) reasons.push(key.reason);
     const bpm = bpmMatch(row.bpmX100, reference.bpmX100);
     if (bpm.percent !== null && bpm.score > 0) {
-      reasons.push(bpm.percent < 0.05 ? "Same tempo" : `${bpm.percent.toFixed(1)} % tempo apart`);
+      reasons.push(bpm.percent < 0.05 ? t("Same tempo") : t("{percent} % tempo apart", { percent: bpm.percent.toFixed(1) }));
     }
     let score = 0.5 * key.score + 0.4 * bpm.score;
     if (row.genre !== "" && row.genre.toLowerCase() === reference.genre.toLowerCase()) {
       score += 0.1;
-      reasons.push("Same genre");
+      reasons.push(t("Same genre"));
     }
     const after = followed.has(row.id);
     if (after) {
       score += 0.2;
-      reasons.push("Followed it in your past sets");
+      reasons.push(t("Followed it in your past sets"));
     }
     score += 0.02 * Math.min(Math.max(row.rating, 0), 5);
     if (row.artist !== "" && row.artist === reference.artist) score -= 0.1;
