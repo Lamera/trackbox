@@ -119,7 +119,7 @@ import styles from "./Player.module.css";
 const HOT_CUE_LETTERS = "ABCDEFGH";
 const PAD_LOOP_BEATS = [0.25, 0.5, 1, 2, 4, 8, 16, 32];
 /** Pairs, back then forward. **[VERIFY]** against the FLX4 manual's layout. */
-const PAD_JUMP_BEATS = [1, 1, 2, 2, 4, 4, 8, 8];
+const PAD_JUMP_BEATS = [2, 2, 4, 4, 8, 8, 16, 16];
 const PAD_KEY_SHIFTS = [0, 1, 2, 3, -3, -2, -1, 0];
 /** **[MIXXX]** A jog wheel is 720 ticks a turn at 33⅓ rpm: 1.8 s of track a turn. */
 const JOG_SECONDS_PER_TICK = 1.8 / 720;
