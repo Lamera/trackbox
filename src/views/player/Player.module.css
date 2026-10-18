@@ -1159,22 +1159,6 @@ button.pageNumber:disabled { color: var(--c-icon-off); }
 .cueRow[data-blank] { justify-content: flex-end; }
 .cueRow[data-blank] .cueDelete { color: var(--c-cue-delete-empty); }
 
-/* The hot-cue list is eight fixed slots; an empty one shows its letter and
-   nothing else, so the list reads as the pads do. */
-.cueChip {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: var(--s-pad-cue-inner);
-  height: var(--s-pad-cue-inner);
-  border-radius: 1px;
-  font-size: var(--f-size-sm);
-  font-weight: 700;
-  color: var(--c-pad-label);
-  flex: none;
-}
-.cueChip[data-set] { background: var(--cue-colour, var(--c-pad-set)); color: var(--c-black); }
-
 .cueTime { color: var(--c-text); font-variant-numeric: tabular-nums; flex: none; }
 .memoryCueDot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .cueName { color: var(--c-text); flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; }
@@ -1205,79 +1189,159 @@ button.cueDelete:hover:not(:disabled),
 button.cueDelete:focus-visible:not(:disabled) { background: var(--c-error); color: var(--c-icon-on); }
 button.cueDelete:disabled { color: var(--c-icon-off); }
 .cueRow[role="button"] { cursor: default; text-align: left; }
-/* A hot cue row dragged to another slot: it dims where it was lifted from and
-   the slot it would land on is outlined. */
-.cueRow[data-dragging] { opacity: .4; }
-.cueRow[data-drop] { outline: 1px solid var(--c-accent); outline-offset: -1px; }
+/* A hot cue pad dragged to another one: it dims where it was lifted from and
+   the pad it would land on is outlined. */
+.padCell[data-dragging] { opacity: .4; }
+.padCell[data-drop] { outline: 1px solid var(--c-accent); outline-offset: -1px; }
 
-/* The eight hot cues as the pads lie under the hand: A–D down the left, E–H
-   down the right, all eight in view at once, each tinted with its colour. */
-.hotCueGrid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  grid-template-rows: repeat(4, minmax(var(--s-cue-row-h), 1fr));
-  grid-auto-flow: column;
-  padding-bottom: var(--s-cue-list-inset);
-}
-.hotCueGrid .cueRow {
-  position: relative;
-  height: auto;
-  min-width: 0;
-  overflow: hidden;
-  gap: 4px;
-  padding: 0 4px 0 3px;
-  border-left: 3px solid transparent;
-  border-radius: 2px;
-}
-.hotCueGrid .cueRow:not([data-empty]) {
-  border-left-color: var(--cue-colour, var(--c-pad-set));
-  background: color-mix(in srgb, var(--cue-colour, var(--c-pad-set)) 16%, var(--c-cue-row));
-}
-.hotCueGrid .cueRow:hover:not([data-empty]) {
-  background: color-mix(in srgb, var(--cue-colour, var(--c-pad-set)) 28%, var(--c-cue-row));
-}
-.hotCueGrid .cueRow[data-empty] { opacity: 0.55; }
-/* A pad that is sounding or chosen: the accent, as a pressed tab. */
-.hotCueGrid .cueRow[data-on] {
-  border-left-color: var(--c-accent);
-  background: color-mix(in srgb, var(--c-accent) 30%, var(--c-cue-row));
-}
-/* The PADS tab: the mode, a line about it when there is one, the eight pads. */
+/* The pads beside the deck, laid out as the controller's: the four mode
+   buttons with their SHIFT modes printed below, then two rows of four pads. */
 .padPanel {
   display: grid;
-  grid-template-rows: auto auto 1fr;
+  grid-template-rows: auto auto minmax(0, 1fr);
   min-height: 0;
 }
 .padModes {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px;
-  padding: 4px 4px 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  padding: 5px 5px 0;
 }
-.padModes .sideTab { flex: 1 1 30%; padding: 3px 0; }
+.padModeButton { display: flex; flex-direction: column; align-items: stretch; gap: 1px; min-width: 0; }
+.padModeButton button {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  border: 1px solid var(--c-outline);
+  border-radius: 2px;
+  background: var(--c-panel);
+  color: var(--c-text);
+  font: inherit;
+  font-size: var(--f-size-xs);
+  font-weight: 700;
+  padding: 2px 0;
+  cursor: default;
+}
+/* The SHIFT mode: the small print under the button, no box of its own. */
+.padModeButton button[data-shift] {
+  border-color: transparent;
+  background: none;
+  color: var(--c-text-dim);
+  font-size: 9px;
+  padding: 0;
+}
+.padModeButton button[data-on] {
+  background: var(--c-tab-active);
+  border-color: var(--c-tab-active);
+  color: var(--c-icon-on);
+}
+.padModeButton button[data-shift][data-on] { background: none; color: var(--c-tab-active); }
+.padModeButton button:focus-visible { outline: 1px solid var(--c-accent); outline-offset: 1px; }
 .padNote {
   margin: 4px 6px 0;
   font-size: var(--f-size-xs);
   color: var(--c-text-dim);
+}
+.padGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(var(--s-cue-row-h), 1fr));
+  gap: 5px;
+  padding: 5px;
+  min-height: 0;
+}
+/* One pad: the hardware's dark rubber square, its edge lit as the LED is. */
+.padCell {
+  --pad-lit: var(--cue-colour, var(--c-pad-active));
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  padding: 2px;
+  border: 1px solid var(--c-raised);
+  border-radius: 4px;
+  background: var(--c-pad-well);
+  box-shadow: inset 0 -2px 0 rgb(0 0 0 / 0.45);
+  color: var(--c-pad-label);
+  font-size: var(--f-size-xs);
+  font-weight: 700;
+  text-align: center;
+  cursor: default;
+  user-select: none;
+  transition: background 60ms, box-shadow 60ms, border-color 60ms;
+}
+.padCell[data-lit] {
+  border-color: var(--pad-lit);
+  background: color-mix(in srgb, var(--pad-lit) 14%, var(--c-pad-well));
+  box-shadow: inset 0 -2px 0 rgb(0 0 0 / 0.45), inset 0 0 6px color-mix(in srgb, var(--pad-lit) 35%, transparent);
+  color: var(--c-text);
+}
+.padCell[data-lit]:hover { background: color-mix(in srgb, var(--pad-lit) 24%, var(--c-pad-well)); }
+.padCell[data-lit]:active,
+.padCell[data-on] {
+  background: color-mix(in srgb, var(--pad-lit) 55%, var(--c-pad-well));
+  box-shadow: 0 0 8px color-mix(in srgb, var(--pad-lit) 60%, transparent);
+  color: var(--c-icon-on);
+}
+.padCell[data-empty] { opacity: 0.6; }
+.padCell:focus-visible { outline: 1px solid var(--c-accent); outline-offset: 1px; }
+.padTop { display: flex; align-items: center; gap: 2px; max-width: 100%; min-width: 0; }
+/* The letter as the pad's own coloured square, in the cue's colour once set. */
+.padLetter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  min-width: 13px;
+  height: 13px;
+  border-radius: 2px;
+  font-size: var(--f-size-xs);
+  color: inherit;
+}
+.padCell[data-lit] .padLetter { background: var(--pad-lit); color: var(--c-black); }
+.padValue {
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 9px;
+  letter-spacing: -0.4px;
+  font-variant-numeric: tabular-nums;
+}
+.padSub { color: var(--c-text-dim); font-size: 9px; }
+.padCell[data-on] .padSub { color: inherit; }
+.padCell .cueName {
+  flex: none;
+  max-width: 100%;
+  font-size: 9px;
+  font-weight: 400;
+  color: var(--c-text-dim);
+  text-overflow: ellipsis;
 }
 .cueLoop {
   flex: none;
   font-weight: 700;
   color: var(--c-cue-orange);
 }
-/* The ✕ over the cell's right end, and only under the pointer, so a narrow
-   cell keeps its time and loop mark. */
-.hotCueGrid button.cueDelete {
+/* The ✕ in the pad's corner, and only under the pointer. */
+.padCell button.cueDelete {
   opacity: 0;
   position: absolute;
-  top: 50%;
-  right: 2px;
+  top: 1px;
+  right: 1px;
   margin: 0;
-  translate: 0 -50%;
-  background: var(--c-cue-row);
+  padding: 0 3px;
+  font-size: 9px;
+  background: var(--c-pad-well);
 }
-.hotCueGrid .cueRow:hover button.cueDelete,
-.hotCueGrid .cueRow:focus-within button.cueDelete { opacity: 1; }
+.padCell:hover button.cueDelete,
+.padCell:focus-within button.cueDelete { opacity: 1; }
 
 /* The INFO tab is DeckInfo.module.css. */
 

@@ -808,26 +808,30 @@ function gridButton(
  */
 const MEMORY_ROWS = 10;
 
-/** The panel tabs beside the deck. */
+/** The panel tabs beside the deck; the pads tab is named after its mode. */
 const PANELS = [
   { id: "memory", label: "MEMORY" },
-  { id: "hotCue", label: "HOT CUE" },
   { id: "pads", label: "PADS" },
   { id: "info", label: "INFO" },
 ] as const;
 
-/** The pad modes the PADS tab shows; HOT CUE has a tab of its own. */
-type ShownPadMode = Exclude<ControllerPadMode, "hotCue">;
-const PAD_MODE_LABELS: Record<ShownPadMode, string> = {
+const PAD_MODE_LABELS: Record<ControllerPadMode, string> = {
+  hotCue: "HOT CUE",
+  keyboard: "KEYBOARD",
   padFx1: "PAD FX1",
   padFx2: "PAD FX2",
   beatJump: "BEAT JUMP",
   beatLoop: "BEAT LOOP",
-  keyShift: "KEY SHIFT",
   sampler: "STEMS",
-  keyboard: "KEYBOARD",
+  keyShift: "KEY SHIFT",
 };
-const SHOWN_PAD_MODES = Object.keys(PAD_MODE_LABELS) as ShownPadMode[];
+/** The FLX4's four mode buttons, each with its SHIFT mode printed below it. */
+const PAD_MODE_BUTTONS: readonly (readonly [ControllerPadMode, ControllerPadMode])[] = [
+  ["hotCue", "keyboard"],
+  ["padFx1", "padFx2"],
+  ["beatJump", "beatLoop"],
+  ["sampler", "keyShift"],
+];
 
 /** A cue's name in the cue list: blank when it has none, edited in place on a double-click. */
 function CueName({ cue, renaming, setRenaming, canEdit, onSave }: {
@@ -949,8 +953,8 @@ export const Player = memo(function Player({
     [onBars],
   );
   const [padMode, setPadMode] = useState<PadMode>("cue");
-  const [panel, setPanel] = useState<CuePanel>("hotCue");
-  const [shownPadMode, setShownPadMode] = useState<ShownPadMode>("padFx1");
+  const [panel, setPanel] = useState<CuePanel>("pads");
+  const [padBank, setPadBank] = useState<ControllerPadMode>("hotCue");
   const [renamingCue, setRenamingCue] = useState<{ id: string; text: string } | null>(null);
   const [cueColorMenu, setCueColorMenu] = useState<{x: number; y: number; cue: Cue} | null>(null);
   const writeCue = useCueWriter(onError);
@@ -2019,7 +2023,8 @@ export const Player = memo(function Player({
           break;
         case "showHotCues":
           event.preventDefault();
-          setPanel("hotCue");
+          setPadBank("hotCue");
+          setPanel("pads");
           break;
         case "showInfo":
           event.preventDefault();
@@ -2243,33 +2248,34 @@ export const Player = memo(function Player({
       default: return;
     }
   };
-  /** What one pad of the PADS tab shows, and whether it can be pressed. */
-  const padCell = (mode: ShownPadMode, pad: number) => {
+  /** What one pad shows outside HOT CUE: two lines, lit as the hardware's LED, on when sounding or chosen. */
+  const padCell = (mode: ControllerPadMode, pad: number) => {
     const noBeat = playback.idle || bpmX100 <= 0;
     switch (mode) {
       case "padFx1":
       case "padFx2": {
         const fx = padFxFor(mode, pad);
-        return { chip: String(pad + 1), label: fx ? padFxLabel(fx) : "", on: fx !== null && padFx.heard?.fx === fx, disabled: noBeat };
+        const [top = "", bottom = ""] = fx ? padFxLabel(fx).split(" ") : [];
+        return { top, bottom, on: fx !== null && padFx.heard?.fx === fx, disabled: noBeat };
       }
       case "beatJump": {
         const beats = PAD_JUMP_BEATS[pad] ?? 0;
-        return { chip: pad % 2 === 0 ? "◀" : "▶", label: `${pad % 2 === 0 ? "−" : "+"}${beats}`, on: false, disabled: noBeat };
+        return { top: pad % 2 === 0 ? "◀" : "▶", bottom: String(beats), on: false, disabled: noBeat };
       }
       case "beatLoop": {
         const beats = PAD_LOOP_BEATS[pad] ?? 0;
-        return { chip: String(pad + 1), label: loopBeatsLabel(beats), on: activeLoop && loopBeats === beats, disabled: noBeat };
+        return { top: loopBeatsLabel(beats), bottom: "", on: activeLoop && loopBeats === beats, disabled: noBeat };
       }
       case "keyShift": {
         const shift = PAD_KEY_SHIFTS[pad] ?? 0;
-        const label = shift > 0 ? `+${shift}` : shift < 0 ? `−${-shift}` : "±0";
-        return { chip: String(pad + 1), label, on: !playback.idle && playback.keyShift === shift, disabled: playback.idle || !playback.shiftsKey };
+        const top = shift > 0 ? `+${shift}` : shift < 0 ? `−${-shift}` : "±0";
+        return { top, bottom: "", on: !playback.idle && playback.keyShift === shift, disabled: playback.idle || !playback.shiftsKey };
       }
       default:
-        return { chip: String(pad + 1), label: "", on: false, disabled: true };
+        return { top: "", bottom: "", on: false, disabled: true };
     }
   };
-  const padHeld = (mode: ShownPadMode) => mode === "padFx1" || mode === "padFx2";
+  const padHeld = (mode: ControllerPadMode) => mode === "padFx1" || mode === "padFx2";
   // The platter under the hand drags the deck exactly as the mouse on the
   // waveform does, so the waveform follows the hand frame by frame.
   const jog = useRef<{
@@ -2341,11 +2347,8 @@ export const Player = memo(function Player({
     }
     // The screen follows the pad mode buttons, loaded or not.
     if (intent.type === "padMode") {
-      if (intent.mode === "hotCue") setPanel("hotCue");
-      else {
-        setShownPadMode(intent.mode);
-        setPanel("pads");
-      }
+      setPadBank(intent.mode);
+      setPanel("pads");
       return;
     }
     if (playback.idle) return;
@@ -3182,131 +3185,125 @@ export const Player = memo(function Player({
       <aside className={styles.side} aria-label="Cue list">
         {panel === "info" ? (
           <DeckInfo track={track} details={details} />
-        ) : panel === "hotCue" ? (
-          /* Eight slots, always: an empty one is a slot you can fill, and
-             hiding it makes the list read as a shorter track. A row rather
-             than a button, as the memory list's are, because the ✕ inside a
-             set row is one: the row calls the cue, the ✕ clears it. */
-          <div className={`${styles.cueList} ${styles.hotCueGrid}`}>
-            {PADS.map((letter) => {
-              const cue = hot.at(letter);
-              const movable = cue !== null && hot.canEdit && cue.id !== "";
-              const colour = cueStyle(undefined, cue?.colour, viewPrefs.hotCueColor, cue ? cue.outMs > cue.positionMs : false);
-              const isLoop = cue !== null && cue.outMs > cue.positionMs;
-              return (
-                <div
-                  key={letter}
-                  role="button"
-                  tabIndex={cue ? 0 : -1}
-                  className={styles.cueRow}
-                  style={colour}
-                  aria-label={`Hot cue ${letter}`}
-                  aria-disabled={cue ? undefined : true}
-                  data-empty={cue ? undefined : ""}
-                  data-dragging={dragSlot === letter ? "" : undefined}
-                  data-drop={dragSlot !== null && dropSlot === letter && dragSlot !== letter ? "" : undefined}
-                  draggable={movable}
-                  onDragStart={movable ? (event) => {
-                    event.dataTransfer.effectAllowed = "move";
-                    event.dataTransfer.setData("text/plain", `hot-cue:${letter}`);
-                    setDragSlot(letter);
-                  } : undefined}
-                  onDragEnd={() => { setDragSlot(null); setDropSlot(null); }}
-                  onDragOver={dragSlot !== null ? (event) => {
-                    event.preventDefault();
-                    event.dataTransfer.dropEffect = "move";
-                    setDropSlot(letter);
-                  } : undefined}
-                  onDragLeave={() => setDropSlot((over) => (over === letter ? null : over))}
-                  onDrop={dragSlot !== null ? (event) => {
-                    event.preventDefault();
-                    hot.move(dragSlot, letter);
-                    setDragSlot(null);
-                    setDropSlot(null);
-                  } : undefined}
-                  onClick={cue ? () => hot.press(letter) : undefined}
-                  onContextMenu={cue ? (event) => {
-                    event.preventDefault(); event.stopPropagation();
-                    setCueColorMenu({x: event.clientX, y: event.clientY, cue});
-                  } : undefined}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      hot.press(letter);
-                    }
-                  }}
-                >
-                  <span
-                    className={styles.cueChip}
-                    data-set={cue ? "" : undefined}
+        ) : panel === "pads" ? (
+          <div className={styles.padPanel}>
+            {/* The FLX4's mode buttons: the mode on the button, its SHIFT mode below it. */}
+            <div className={styles.padModes} role="tablist" aria-label="Pad mode">
+              {PAD_MODE_BUTTONS.map(([main, shifted]) => (
+                <div key={main} className={styles.padModeButton}>
+                  {[main, shifted].map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      role="tab"
+                      aria-selected={padBank === mode}
+                      data-shift={mode === shifted || undefined}
+                      data-on={padBank === mode || undefined}
+                      onClick={() => setPadBank(mode)}
+                    >
+                      {PAD_MODE_LABELS[mode]}
+                    </button>
+                  ))}
+                </div>
+              ))}
+            </div>
+            {padBank === "sampler" ? (
+              <p className={styles.padNote}>STEMS on the pads are planned for a later version.</p>
+            ) : padBank === "keyboard" ? (
+              <p className={styles.padNote}>KEYBOARD is not supported yet.</p>
+            ) : padBank === "beatJump" && activeLoop ? (
+              <p className={styles.padNote}>LOOP MOVE: a jump moves the loop.</p>
+            ) : null}
+            {/* Two rows of four, as the pads lie under the hand: A–D on top, E–H below. */}
+            <div className={styles.padGrid} aria-label={padBank === "hotCue" ? "Hot cue list" : PAD_MODE_LABELS[padBank]}>
+              {padBank === "hotCue" ? PADS.map((letter) => {
+                const cue = hot.at(letter);
+                const movable = cue !== null && hot.canEdit && cue.id !== "";
+                const colour = cueStyle(undefined, cue?.colour, viewPrefs.hotCueColor, cue ? cue.outMs > cue.positionMs : false);
+                const isLoop = cue !== null && cue.outMs > cue.positionMs;
+                return (
+                  <div
+                    key={letter}
+                    role="button"
+                    tabIndex={cue ? 0 : -1}
+                    className={styles.padCell}
                     style={colour}
+                    aria-label={`Hot cue ${letter}`}
+                    aria-disabled={cue ? undefined : true}
+                    data-lit={cue ? "" : undefined}
+                    data-empty={cue ? undefined : ""}
+                    data-dragging={dragSlot === letter ? "" : undefined}
+                    data-drop={dragSlot !== null && dropSlot === letter && dragSlot !== letter ? "" : undefined}
+                    draggable={movable}
+                    onDragStart={movable ? (event) => {
+                      event.dataTransfer.effectAllowed = "move";
+                      event.dataTransfer.setData("text/plain", `hot-cue:${letter}`);
+                      setDragSlot(letter);
+                    } : undefined}
+                    onDragEnd={() => { setDragSlot(null); setDropSlot(null); }}
+                    onDragOver={dragSlot !== null ? (event) => {
+                      event.preventDefault();
+                      event.dataTransfer.dropEffect = "move";
+                      setDropSlot(letter);
+                    } : undefined}
+                    onDragLeave={() => setDropSlot((over) => (over === letter ? null : over))}
+                    onDrop={dragSlot !== null ? (event) => {
+                      event.preventDefault();
+                      hot.move(dragSlot, letter);
+                      setDragSlot(null);
+                      setDropSlot(null);
+                    } : undefined}
+                    onClick={cue ? () => hot.press(letter) : undefined}
+                    onContextMenu={cue ? (event) => {
+                      event.preventDefault(); event.stopPropagation();
+                      setCueColorMenu({x: event.clientX, y: event.clientY, cue});
+                    } : undefined}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        hot.press(letter);
+                      }
+                    }}
                   >
-                    {letter}
-                  </span>
-                  {cue ? (
-                    <>
-                      <span className={styles.cueTime}>{splitTime(cue.positionMs / 1000).main}</span>
+                    <div className={styles.padTop}>
+                      <span className={styles.padLetter}>{letter}</span>
+                      {cue ? <span className={styles.padValue}>{splitTime(cue.positionMs / 1000).main.replace(/^0(?=\d:)/, "")}</span> : null}
                       {isLoop ? (
                         <span className={styles.cueLoop} role="img" aria-label="Loop"
                           title={t("Loop, {seconds} s", { seconds: ((cue.outMs - cue.positionMs) / 1000).toFixed(1) })}>
                           ↻
                         </span>
                       ) : null}
-                      <CueName cue={cue} renaming={renamingCue} setRenaming={setRenamingCue}
-                        canEdit={hot.canEdit} onSave={(text) => writeCue((edits) => edits.setCueComment(cue.id, text))} />
-                      <button
-                        type="button"
-                        className={styles.cueDelete}
-                        aria-label={`Clear hot cue ${letter}`}
-                        title={hot.canEdit ? `Clear Hot Cue ${letter}` : READ_ONLY_REASON}
-                        disabled={!hot.canEdit || cue.id === ""}
-                        onClick={(event) => {
-                          // The row underneath calls the cue; a clear is not
-                          // also a jump.
-                          event.stopPropagation();
-                          hot.clear(letter);
-                        }}
-                      >
-                        ✕
-                      </button>
-                    </>
-                  ) : null}
-                </div>
-              );
-            })}
-          </div>
-        ) : panel === "pads" ? (
-          <div className={styles.padPanel}>
-            <div className={styles.padModes} role="tablist" aria-label="Pad mode">
-              {SHOWN_PAD_MODES.map((mode) => (
-                <button
-                  key={mode}
-                  type="button"
-                  role="tab"
-                  aria-selected={shownPadMode === mode}
-                  className={styles.sideTab}
-                  data-on={shownPadMode === mode || undefined}
-                  onClick={() => setShownPadMode(mode)}
-                >
-                  {PAD_MODE_LABELS[mode]}
-                </button>
-              ))}
-            </div>
-            {shownPadMode === "sampler" ? (
-              <p className={styles.padNote}>STEMS on the pads are planned for a later version.</p>
-            ) : shownPadMode === "keyboard" ? (
-              <p className={styles.padNote}>KEYBOARD is not supported yet.</p>
-            ) : shownPadMode === "beatJump" && activeLoop ? (
-              <p className={styles.padNote}>LOOP MOVE: a jump moves the loop.</p>
-            ) : null}
-            <div className={`${styles.cueList} ${styles.hotCueGrid}`}>
-              {Array.from({ length: 8 }, (_, pad) => {
-                const cell = padCell(shownPadMode, pad);
-                const held = padHeld(shownPadMode);
+                    </div>
+                    {cue ? (
+                      <>
+                        <CueName cue={cue} renaming={renamingCue} setRenaming={setRenamingCue}
+                          canEdit={hot.canEdit} onSave={(text) => writeCue((edits) => edits.setCueComment(cue.id, text))} />
+                        <button
+                          type="button"
+                          className={styles.cueDelete}
+                          aria-label={`Clear hot cue ${letter}`}
+                          title={hot.canEdit ? `Clear Hot Cue ${letter}` : READ_ONLY_REASON}
+                          disabled={!hot.canEdit || cue.id === ""}
+                          onClick={(event) => {
+                            // The pad underneath calls the cue; a clear is not also a jump.
+                            event.stopPropagation();
+                            hot.clear(letter);
+                          }}
+                        >
+                          ✕
+                        </button>
+                      </>
+                    ) : null}
+                  </div>
+                );
+              }) : Array.from({ length: 8 }, (_, pad) => {
+                const cell = padCell(padBank, pad);
+                const held = padHeld(padBank);
                 const press = () => {
                   if (cell.disabled) return;
-                  if (held) padFx.press(shownPadMode, pad);
-                  else controllerPad(shownPadMode, pad, false);
+                  if (held) padFx.press(padBank, pad);
+                  else controllerPad(padBank, pad, false);
                 };
                 const release = () => { if (held) padFx.release(pad); };
                 return (
@@ -3314,10 +3311,11 @@ export const Player = memo(function Player({
                     key={pad}
                     role="button"
                     tabIndex={cell.disabled ? -1 : 0}
-                    className={styles.cueRow}
-                    aria-label={`${PAD_MODE_LABELS[shownPadMode]} pad ${pad + 1}`}
+                    className={styles.padCell}
+                    aria-label={`${PAD_MODE_LABELS[padBank]} pad ${pad + 1}`}
                     aria-disabled={cell.disabled || undefined}
                     aria-pressed={cell.on}
+                    data-lit={cell.disabled ? undefined : ""}
                     data-empty={cell.disabled ? "" : undefined}
                     data-on={cell.on || undefined}
                     onPointerDown={(event) => {
@@ -3336,8 +3334,8 @@ export const Player = memo(function Player({
                       if (event.key === "Enter" || event.key === " ") release();
                     }}
                   >
-                    <span className={styles.cueChip} data-set={cell.on ? "" : undefined}>{cell.chip}</span>
-                    <span className={styles.cueName}>{cell.label}</span>
+                    <span className={styles.padValue}>{cell.top}</span>
+                    {cell.bottom ? <span className={styles.padSub}>{cell.bottom}</span> : null}
                   </div>
                 );
               })}
@@ -3410,7 +3408,7 @@ export const Player = memo(function Player({
               data-on={panel === tab.id || undefined}
               onClick={() => setPanel(tab.id)}
             >
-              {tab.id === "pads" ? PAD_MODE_LABELS[shownPadMode] : tab.label}
+              {tab.id === "pads" ? PAD_MODE_LABELS[padBank] : tab.label}
             </button>
           ))}
         </div>

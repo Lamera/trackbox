@@ -105,12 +105,15 @@ switched by the hardware; SHIFT + a mode button selects the second mode.
 | PAD FX1, PAD FX2 | A pad effect while the pad is held; see [PAD FX](#pad-fx). | Same as without SHIFT. |
 | SAMPLER, KEYBOARD | Not mapped. SAMPLER is planned to control stems. | Not mapped. |
 
-The screen follows the pad mode buttons: HOT CUE opens the deck's HOT CUE tab,
-every other mode opens the PADS tab beside it (named after the mode), which
-shows the eight pads as on the hardware: the effects of PAD FX1/FX2 with the
-sounding one highlighted, the jump sizes of BEAT JUMP (with a LOOP MOVE note
-in a loop), the loop lengths of BEAT LOOP and the semitones of KEY SHIFT. The
-pads there work with the mouse too; a PAD FX pad sounds while it is held.
+The screen follows the pad mode buttons. The second tab beside the deck is
+named after the current mode and is laid out like the controller: the four
+mode buttons with their SHIFT modes printed below them, then the eight pads in
+two rows of four (pads 1–4 / hot cues A–D on top). It shows the hot cues with
+their colour, time and name in HOT CUE, the effects of PAD FX1/FX2 with the
+sounding one lit, the jump sizes of BEAT JUMP (with a LOOP MOVE note in a
+loop), the loop lengths of BEAT LOOP and the semitones of KEY SHIFT. The pads
+there work with the mouse too; a PAD FX pad sounds while it is held. Choosing
+a mode on screen does not change the mode on the controller.
 
 Pad LEDs by mode:
 
