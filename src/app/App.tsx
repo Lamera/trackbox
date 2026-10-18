@@ -9,6 +9,7 @@ import { useShowWindowWhenReady } from "@/lib/windowReady";
 import { waveformKindOf } from "@/canvas";
 import { useAutoJoinLink } from "@/store/useAutoJoinLink";
 import { useEventCallback } from "@/store/useEventCallback";
+import { useControllerIntent } from "@/store/useControllerIntent";
 /**
  * Export-mode shell.
  *
@@ -57,6 +58,7 @@ import { asWaveformOrientation, asWorkspaceMode, layoutForWorkspace, readExportL
 import { FIELD_LABEL, InfoPanel } from "@/views/info/InfoPanel";
 import { SubBrowser } from "@/views/subbrowser/SubBrowser";
 import { RightRail } from "@/views/browser/RightRail";
+import { SuggestionPanel } from "@/views/browser/SuggestionPanel";
 import { useColumns, type ColumnContext } from "@/store/useColumns";
 import { useExplorer } from "@/store/useExplorer";
 import { importLoose, isLooseId } from "@/lib/explorer";
@@ -105,6 +107,9 @@ const SmartPlaylistEditor = lazy(() => import("@/views/tree/SmartPlaylistEditor"
 const MissingFileManager = lazy(() => import("@/views/library/MissingFileManager").then(m => ({ default: m.MissingFileManager })));
 
 const SHOW_MAIN_SUPPORT = true;
+
+/** Where the controller's BROWSE knob turns: the source rail, the tree, the track list, or Track Suggestion. */
+type BrowseZone = "rail" | "tree" | "list" | "suggest";
 
 /**
  * How many tracks one backend call handles in a long operation. Each call is
@@ -287,6 +292,14 @@ function AppBody() {
     () => ({
       a: (bpm: number | null) => setPlayingBpm((p) => (p.a === bpm ? p : { ...p, a: bpm })),
       b: (bpm: number | null) => setPlayingBpm((p) => (p.b === bpm ? p : { ...p, b: bpm })),
+    }),
+    [],
+  );
+  const [deckPlaying, setDeckPlaying] = useState<Record<DeckId, boolean>>({ a: false, b: false });
+  const reportPlaying = useMemo(
+    () => ({
+      a: (on: boolean) => setDeckPlaying((p) => (p.a === on ? p : { ...p, a: on })),
+      b: (on: boolean) => setDeckPlaying((p) => (p.b === on ? p : { ...p, b: on })),
     }),
     [],
   );
@@ -588,8 +601,51 @@ function AppBody() {
     if (!twoDecks || otherTrackId === null) return;
     setSyncMasterState(syncMaster === "a" ? "b" : "a");
   }, [syncMaster, masterTrackId, otherTrackId, twoDecks]);
+  /*
+   * MASTER goes to the deck that is heard: when the master stops, or the other
+   * deck starts while the master is stopped. Only on those changes, so a
+   * MASTER pressed on a stopped deck stays, and a pause keeps it where it is.
+   */
+  const playingHeld = useRef(deckPlaying);
+  useEffect(() => {
+    const before = playingHeld.current;
+    playingHeld.current = deckPlaying;
+    const other: DeckId = syncMaster === "a" ? "b" : "a";
+    const masterStopped = before[syncMaster] && !deckPlaying[syncMaster];
+    const otherStarted = !before[other] && deckPlaying[other];
+    if (!twoDecks || deckPlaying[syncMaster] || !deckPlaying[other]) return;
+    if (masterStopped || otherStarted) setSyncMasterState(other);
+  }, [deckPlaying, syncMaster, twoDecks]);
   const trafficTrack = trafficDeck === "b" ? playerTrackB : playerTrack;
   const trafficKey = trafficTrack ? transposeKey(trafficTrack.key, keyShift[trafficDeck]) : null;
+  // Track Suggestion works out of the master deck's track, as it sounds now.
+  const [suggestOpen, setSuggestOpen] = useState(false);
+  const suggestDeck: DeckId = twoDecks ? syncMaster : "a";
+  const suggestTrack = suggestDeck === "b" ? playerTrackB : playerTrack;
+  const suggestReference = useMemo(() => (suggestTrack ? {
+    id: suggestTrack.id,
+    title: suggestTrack.title,
+    hasArtwork: suggestTrack.hasArtwork,
+    deck: suggestDeck,
+    key: transposeKey(suggestTrack.key, keyShift[suggestDeck]),
+    bpmX100: playingBpm[suggestDeck] ?? suggestTrack.bpmX100,
+    genre: suggestTrack.genre,
+    artist: suggestTrack.artist,
+  } : null), [suggestTrack, suggestDeck, keyShift, playingBpm]);
+  const onDecks = useMemo(
+    () => [playerTrack?.id, playerTrackB?.id].filter((id): id is string => id !== undefined),
+    [playerTrack, playerTrackB],
+  );
+  // What the controller's BROWSE knob turns: pressing it moves on to the next.
+  const [browseZone, setBrowseZone] = useState<BrowseZone>("list");
+  const [browsing, setBrowsing] = useState(false);
+  const zone: BrowseZone = browseZone === "suggest" && !suggestOpen ? "list" : browseZone;
+  useControllerIntent((intent) => {
+    if (intent.type !== "browsePress" || intent.shift) return;
+    const zones: BrowseZone[] = suggestOpen ? ["rail", "tree", "list", "suggest"] : ["rail", "tree", "list"];
+    setBrowsing(true);
+    setBrowseZone(zones[(zones.indexOf(zone) + 1) % zones.length] ?? "list");
+  });
   const master = useMasterControls();
   // Read at start so the remembered setting reaches the engine before the
   // first thing plays, not when Settings is next opened.
@@ -605,6 +661,11 @@ function AppBody() {
       try {
         await backend.setAudioConfig(audioPrefs.sampleRate, audioPrefs.bufferSize);
         await backend.setMetronome(audioPrefs.metronomeSound, audioPrefs.metronomeVolume);
+        await backend.setCueRouting(
+          audioPrefs.headphones === "lanes"
+            ? { mode: "lanes", master: [0, 1], cue: [2, 3] }
+            : { mode: audioPrefs.headphones },
+        );
       } catch (e) {
         console.warn("the audio settings did not reach the engine", e);
       }
@@ -1340,6 +1401,10 @@ function AppBody() {
       b: () => deckLoaders.b(selectedRow),
     };
   }, [selectedRow, deckLoaders]);
+  // A controller's LOAD buttons: the highlighted track onto that deck.
+  useControllerIntent((intent) => {
+    if (intent.type === "load" && zone !== "suggest") loadSelectedInto[intent.deck]?.();
+  });
 
   /**
    * The tree's context menu, and the track's.
@@ -2810,7 +2875,13 @@ function AppBody() {
           {/* Only with two decks. The one-player layout has no mixer and no
               crossfader, which is what rekordbox does — and what keeps a deck
               nobody has touched a fader for playing at the level of its file. */}
-          {deckCount(layout) > 1 ? <MixerStrip performance={workspaceMode === "performance"} /> : null}
+          {deckCount(layout) > 1 ? (
+            <MixerStrip
+              performance={workspaceMode === "performance"}
+              bpmX100={playingBpm}
+              masterDeck={syncMaster}
+            />
+          ) : null}
           <Player
             track={playerTrack}
             onEject={ejectA}
@@ -2842,6 +2913,7 @@ function AppBody() {
             publishGridFollow={publishGridFollow.a}
             onGridNudge={gridNudged.a}
             onKeyShift={reportKeyShift.a}
+            onPlaying={reportPlaying.a}
             readOnly={readOnly}
           />
           {deckCount(layout) > 1 ? (
@@ -2877,6 +2949,7 @@ function AppBody() {
               publishGridFollow={publishGridFollow.b}
               onGridNudge={gridNudged.b}
               onKeyShift={reportKeyShift.b}
+              onPlaying={reportPlaying.b}
               readOnly={readOnly}
             />
           ) : null}
@@ -2895,8 +2968,9 @@ function AppBody() {
         className={styles.body}
         ref={bodyRef}
         style={{ ["--tree-w" as string]: `${treeWidth}px` }}
-        data-info={infoOpen ? "" : undefined}
+        data-info={infoOpen || suggestOpen ? "" : undefined}
         data-sub={subOpen ? "" : undefined}
+        data-browsing={browsing ? "" : undefined}
       >
         <TreeView
           nodes={treeNodes}
@@ -2933,6 +3007,7 @@ function AppBody() {
           onDeviceCreate={createOnDevice}
           onDeviceRename={renameOnDevice}
           onDeviceDelete={deleteOnDevice}
+          browseFocus={zone === "rail" || zone === "tree" ? zone : null}
         />
         <div
           className={styles.splitter}
@@ -2988,6 +3063,7 @@ function AppBody() {
           onTrafficLight={setTrafficLight}
           trafficKey={trafficKey}
           onFocusedRow={deckLoaders.a}
+          browseFocus={zone === "list"}
           onSelectedRow={setSelectedRow}
           onDragTracks={setDraggedTracks}
           dragging={draggedTracks !== null}
@@ -3018,6 +3094,7 @@ function AppBody() {
           onColumnMove={cols.move}
           onColumnResize={cols.resize}
           onColumnToggle={cols.toggle}
+          onColumnRename={cols.rename}
           onColumnAutoSize={cols.autoSize}
           onColumnAutoSizeAll={cols.autoSizeEvery}
           seed={seed}
@@ -3042,19 +3119,35 @@ function AppBody() {
             list={subList}
           />
         ) : null}
-        {infoOpen ? (
-          <InfoPanel
-            // The browser's selection, as rekordbox's Information Window
-            // follows it; the deck's track only when nothing is selected —
-            // never for a multiple selection, which the panel shows as one.
-            track={infoSelection.length > 1 ? null : selectedRow ?? playerTrack}
-            selection={infoSelection}
-            readOnly={readOnly}
-            libraryGeneration={libraryGeneration}
-            onRate={rateTracks}
-            onComment={commentTracks}
-            onEdit={runEdit}
-          />
+        {infoOpen || suggestOpen ? (
+          <div className={styles.sidePanels}>
+            {infoOpen ? (
+              <InfoPanel
+                // The browser's selection, as rekordbox's Information Window
+                // follows it; the deck's track only when nothing is selected —
+                // never for a multiple selection, which the panel shows as one.
+                track={infoSelection.length > 1 ? null : selectedRow ?? playerTrack}
+                selection={infoSelection}
+                readOnly={readOnly}
+                libraryGeneration={libraryGeneration}
+                onRate={rateTracks}
+                onComment={commentTracks}
+                onEdit={runEdit}
+              />
+            ) : null}
+            {suggestOpen ? (
+              <SuggestionPanel
+                reference={suggestReference}
+                exclude={onDecks}
+                libraryGeneration={libraryGeneration}
+                keyDisplay={viewPrefs.keyDisplay}
+                decks={twoDecks ? ["a", "b"] : ["a"]}
+                onLoad={loadTrack}
+                browseFocus={zone === "suggest"}
+                onDragTracks={setDraggedTracks}
+              />
+            ) : null}
+          </div>
         ) : null}
         <RightRail
           className={styles.rightRail}
@@ -3062,6 +3155,8 @@ function AppBody() {
           onToggleInfo={() => setInfoOpen((open) => !open)}
           subOpen={subOpen}
           onToggleSub={() => setSubOpen((open) => !open)}
+          suggestOpen={suggestOpen}
+          onToggleSuggest={() => setSuggestOpen((open) => !open)}
         />
       </div>
       <Suspense fallback={null}>
