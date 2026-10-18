@@ -16,6 +16,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { createPortal } from "react-dom";
 import { TimeReadouts } from "./TimeReadouts";
 import { useEventCallback } from "@/store/useEventCallback";
+import { useControllerIntent } from "@/store/useControllerIntent";
 
 import type { Cue, DeckId, Phrase, RowDto } from "@/ipc/types";
 import { getBackend } from "@/ipc/client";
@@ -68,6 +69,10 @@ import {
   wrapIntoLoop,
   tempoAtMs,
   tempoAnnotations,
+  faderToTempo,
+  snapTempo,
+  TEMPO_RANGES,
+  type TempoRange,
   type BeatGrid as TrackBeatGrid,
 } from "@/lib/player";
 import { type DeckLoop, usePlayback } from "@/store/usePlayback";
@@ -105,6 +110,19 @@ import { useHotCues } from "./useHotCues";
 import { useCueWriter } from "./useCueWriter";
 import { CueColorMenu } from "./CueColorMenu";
 import styles from "./Player.module.css";
+
+/** A controller's eight pads, left to right and top row first. */
+const HOT_CUE_LETTERS = "ABCDEFGH";
+const PAD_LOOP_BEATS = [0.25, 0.5, 1, 2, 4, 8, 16, 32];
+/** Pairs, back then forward. **[VERIFY]** against the FLX4 manual's layout. */
+const PAD_JUMP_BEATS = [1, 1, 2, 2, 4, 4, 8, 8];
+const PAD_KEY_SHIFTS = [0, 1, 2, 3, -3, -2, -1, 0];
+/** **[MIXXX]** A jog wheel is 720 ticks a turn at 33⅓ rpm: 1.8 s of track a turn. */
+const JOG_SECONDS_PER_TICK = 1.8 / 720;
+/** SHIFT and the wheel: a turn covers about seventy seconds. */
+const JOG_SEARCH_FACTOR = 40;
+/** A stopped deck nudged by the wheel's side lets go of the drag after this. */
+const JOG_NUDGE_HOLD_MS = 150;
 
 export interface PlayerProps {
   /** The row the browser has selected, or `null` when nothing is. */
@@ -229,6 +247,8 @@ export interface PlayerProps {
   onPlayingBpm?: ((bpmX100: number | null) => void) | undefined;
   /** This deck's key shift in semitones, for the shell's Traffic Light. */
   onKeyShift?: ((semitones: number) => void) | undefined;
+  /** Whether this deck is playing, for the shell's Traffic Light. */
+  onPlaying?: ((playing: boolean) => void) | undefined;
   /**
    * A grid shift on this deck, in milliseconds, for the shell to hand to the
    * other deck: a deck synced to this one moves with it. `publishGridFollow`
@@ -268,10 +288,14 @@ export function cueStyle(
   colour: string | null | undefined,
   /** View › Color › HOT CUE color: CDJ draws every cue in the fallback green. */
   hotCueColor: HotCueColor = "colorful",
+  /** A hot cue saved as a loop: without a colour of its own rekordbox draws it orange. */
+  loop = false,
 ): React.CSSProperties {
   const style: Record<string, string> = {};
   if (left !== undefined) style.left = left;
-  if (colour && hotCueColor === "colorful") style["--cue-colour"] = colour;
+  if (hotCueColor !== "colorful") return style;
+  if (colour) style["--cue-colour"] = colour;
+  else if (loop) style["--cue-colour"] = "var(--c-cue-orange)";
   return style;
 }
 
@@ -370,7 +394,7 @@ export const CueMarkers = memo(function CueMarkers({
             className={cue.memory ? styles.memoryCue : styles.hotCue}
             data-band={band}
             data-cue={cue.memory ? "" : cue.letter}
-            style={cueStyle(left, cue.colour, hotCueColor)}
+            style={cueStyle(left, cue.colour, hotCueColor, cue.outMs > cue.positionMs)}
             title={tip(cue.memory ? "Memory cue" : `Hot cue ${cue.letter}`)}
             aria-hidden
           >
@@ -833,7 +857,7 @@ export const Player = memo(function Player({
   simple = false, transportSlot, flipped = false, dual = false, waveformOrientation = "horizontal", publishZoom,
   bars: linkedBars, onBars, jumpSize: linkedJump, onJumpSize,
   publishSync, peerSync, isMaster = false, onMaster, synced = false, onSyncToggle,
-  leaderBpmX100 = null, onPlayingBpm, onKeyShift, onGridNudge, publishGridFollow, readOnly = false,
+  leaderBpmX100 = null, onPlayingBpm, onKeyShift, onPlaying, onGridNudge, publishGridFollow, readOnly = false,
 }: PlayerProps) {
   const playback = usePlayback(track?.id ?? null, deck, false);
   // The waveforms follow their containers, which change with the window and
@@ -903,7 +927,7 @@ export const Player = memo(function Player({
     [onBars],
   );
   const [padMode, setPadMode] = useState<PadMode>("cue");
-  const [panel, setPanel] = useState<CuePanel>("memory");
+  const [panel, setPanel] = useState<CuePanel>("hotCue");
   const [renamingCue, setRenamingCue] = useState<{ id: string; text: string } | null>(null);
   const [cueColorMenu, setCueColorMenu] = useState<{x: number; y: number; cue: Cue} | null>(null);
   const writeCue = useCueWriter(onError);
@@ -1066,7 +1090,7 @@ export const Player = memo(function Player({
 
   // Bars rather than a fraction: twelve bars is twelve bars whether the track
   // is three minutes or ninety.
-  const span = detailSpan(bars, bpmX100, total);
+  const span = detailSpan(bars, playback.tempo, total);
   // Memoised, not rebuilt each render: `BeatGrid` and `CueMarkers` are
   // `memo()` components taking this object, and a fresh one every render means
   // neither ever hits its memo.
@@ -1336,6 +1360,7 @@ export const Player = memo(function Player({
   const hot = useHotCues({
     trackId: playback.idle ? null : track?.id ?? null,
     cues, positionSeconds, seek, play: playFromCue, playing: deckPlaying, jumpAt, activeLoop: playingLoop, exitLoop: leaveLoop,
+    setLoop: playback.setLoop,
     quantiseTo: quantize ? quantizeGrid : null, readOnly, onError,
   });
   // The hooks own editability, so the disabled state and its explanation
@@ -1774,6 +1799,10 @@ export const Player = memo(function Player({
   useEffect(() => {
     onKeyShift?.(keyShift);
   }, [onKeyShift, keyShift]);
+  const playing = track !== null && playback.playing;
+  useEffect(() => {
+    onPlaying?.(playing);
+  }, [onPlaying, playing]);
 
   /** Match this deck to the other one: its tempo, then its bar. */
   const matchLeader = useCallback(() => {
@@ -2065,6 +2094,158 @@ export const Player = memo(function Player({
     };
   }, [onDeckKey, onDeckKeyUp, onDeckBlur]);
 
+  /*
+   * A DJ controller's deck controls, through the same functions the keys
+   * and the pads on screen use. The mixer and the jog wheels never come
+   * here: the engine takes those directly.
+   */
+  const [tempoRange, setTempoRange] = useState<TempoRange>(6);
+  // The hardware fader takes over only once it reaches the deck's tempo, so
+  // moving it after a sync or a typed BPM does not jump the music.
+  const tempoFader = useRef<{ engaged: boolean; last: number | null }>({ engaged: false, last: null });
+  useEffect(() => {
+    tempoFader.current.engaged = false;
+  }, [synced]);
+  const controllerTempo = (value: number) => {
+    if (synced) return;
+    const target = snapTempo(faderToTempo(value, tempoRange), bpmX100);
+    const fader = tempoFader.current;
+    const current = playback.tempo;
+    if (!fader.engaged) {
+      const reached = Math.abs(target - current) < 0.002;
+      const crossed = fader.last !== null && (fader.last - current) * (target - current) <= 0;
+      fader.last = target;
+      if (!reached && !crossed) return;
+      fader.engaged = true;
+    }
+    fader.last = target;
+    setTempoResetLocked(false);
+    playback.setTempo(Math.min(Math.max(target, MIN_TEMPO), MAX_TEMPO));
+  };
+  const controllerButton = (button: string, pressed: boolean) => {
+    if (button === "cue") {
+      if (pressed) holdCue();
+      else dropCue();
+      return;
+    }
+    if (!pressed) return;
+    switch (button) {
+      case "play": togglePlay(); break;
+      case "trackStart": playback.seek(0); break;
+      case "sync": beatSync(); break;
+      case "syncHold": onMaster?.(); break;
+      case "tempoRange":
+        setTempoRange((range) => TEMPO_RANGES[(TEMPO_RANGES.indexOf(range) + 1) % TEMPO_RANGES.length] ?? 6);
+        tempoFader.current.engaged = false;
+        break;
+      case "loopIn": markLoopIn(); break;
+      case "loopOut": markLoopOut(); break;
+      case "reloop": reloopOrExit(); break;
+      // In a loop, CALL halves and doubles it, as on rekordbox's FLX4 layout.
+      case "callPrevious": if (playback.loop?.active) resizeLoop(0.5); else memory.callPrevious(); break;
+      case "callNext": if (playback.loop?.active) resizeLoop(2); else memory.callNext(); break;
+      case "quantize": setQuantize((on) => !on); break;
+      default: break;
+    }
+  };
+  const controllerPad = (mode: string, pad: number, shift: boolean) => {
+    switch (mode) {
+      case "hotCue": {
+        const letter = HOT_CUE_LETTERS[pad];
+        if (!letter) return;
+        if (shift) hot.clear(letter);
+        else hot.press(letter);
+        return;
+      }
+      case "beatLoop": {
+        const beats = PAD_LOOP_BEATS[pad];
+        if (beats === undefined) return;
+        if (playback.loop?.active && loopBeats === beats) {
+          reloopOrExit();
+          return;
+        }
+        setLoopBeats(beats);
+        loopOfBeats(beats);
+        return;
+      }
+      case "beatJump": {
+        const beats = PAD_JUMP_BEATS[pad];
+        if (beats === undefined || bpmX100 <= 0) return;
+        seekInPhase(playback.positionRef.current + (pad % 2 === 0 ? -beats : beats) * 6000 / bpmX100);
+        return;
+      }
+      case "keyShift": {
+        const semitones = PAD_KEY_SHIFTS[pad];
+        if (semitones !== undefined) playback.setKeyShift(semitones);
+        return;
+      }
+      // SAMPLER, KEYBOARD and the pad FX have nothing behind them yet.
+      default: return;
+    }
+  };
+  // The platter under the hand drags the deck exactly as the mouse on the
+  // waveform does, so the waveform follows the hand frame by frame.
+  const jog = useRef<{
+    scrubbing: boolean; touched: boolean; at: number; release: ReturnType<typeof setTimeout> | undefined;
+  }>({ scrubbing: false, touched: false, at: 0, release: undefined });
+  const jogRelease = useCallback(() => {
+    const held = jog.current;
+    globalThis.clearTimeout(held.release);
+    if (!held.scrubbing) return;
+    held.scrubbing = false;
+    playback.scrubEnd();
+  }, [playback]);
+  const jogGrab = useCallback(() => {
+    const held = jog.current;
+    if (held.scrubbing) return;
+    held.scrubbing = true;
+    held.at = playback.positionNow();
+    playback.scrubBegin();
+  }, [playback]);
+  const jogTurn = useCallback((ticks: number) => {
+    const held = jog.current;
+    jogGrab();
+    held.at = Math.min(Math.max(held.at + ticks * JOG_SECONDS_PER_TICK, 0), playback.duration || Infinity);
+    playback.scrubTo(held.at);
+    // A stopped deck nudged by the wheel's side lets go once it stops turning.
+    if (!held.touched) {
+      globalThis.clearTimeout(held.release);
+      held.release = globalThis.setTimeout(jogRelease, JOG_NUDGE_HOLD_MS);
+    }
+  }, [playback, jogGrab, jogRelease]);
+  useEffect(() => jogRelease, [jogRelease]);
+  useControllerIntent((intent) => {
+    if (intent.type === "load" || !("deck" in intent) || intent.deck !== deck) return;
+    // Letting go of CUE or of the platter must always land, loaded or not.
+    if (intent.type === "button" && intent.button === "cue" && !intent.pressed) {
+      dropCue();
+      return;
+    }
+    if (intent.type === "jogTouch" && !intent.touched) {
+      jog.current.touched = false;
+      jogRelease();
+      return;
+    }
+    if (playback.idle) return;
+    if (intent.type === "tempo") controllerTempo(intent.value);
+    else if (intent.type === "button") controllerButton(intent.button, intent.pressed);
+    else if (intent.type === "pad" && intent.pressed) controllerPad(intent.mode, intent.pad, intent.shift);
+    else if (intent.type === "jogTouch") {
+      jog.current.touched = true;
+      jogGrab();
+    } else if (intent.type === "jog") {
+      jogTurn(intent.ticks * (intent.mode === "search" ? JOG_SEARCH_FACTOR : 1));
+    }
+  });
+  // What only the interface knows, for the controller's LEDs: sent on change.
+  const ledKey = `${synced ? 1 : 0}${[...HOT_CUE_LETTERS].map((letter) => (hot.at(letter) ? 1 : 0)).join("")}`;
+  useEffect(() => {
+    const hotCues = [...ledKey.slice(1)].map((on) => on === "1");
+    void getBackend()
+      .then((backend) => backend.controllerLeds(deck, { sync: ledKey.startsWith("1"), hotCues }))
+      .catch(() => {});
+  }, [deck, ledKey]);
+
   const takesDrop = dragging && Boolean(onDropTrack);
 
   const dragOver = (event: React.DragEvent<HTMLElement>) => {
@@ -2322,7 +2503,7 @@ export const Player = memo(function Player({
               <OverviewTempoMarkers grid={grid} totalMs={total * 1000} />
               <span
                 ref={overviewHead}
-                className={styles.playhead}
+                className={`${styles.playhead} ${styles.overviewHead}`}
                 data-testid="player-head"
                 aria-hidden
               />
@@ -2635,7 +2816,7 @@ export const Player = memo(function Player({
                     type="button"
                     className={styles.pad}
                     data-set={cue ? "" : undefined}
-                    style={cueStyle(undefined, cue?.colour, viewPrefs.hotCueColor)}
+                    style={cueStyle(undefined, cue?.colour, viewPrefs.hotCueColor, cue ? cue.outMs > cue.positionMs : false)}
                     aria-label={`Hot cue ${letter}`}
                     aria-pressed={cue !== null}
                     title={cue
@@ -2856,7 +3037,8 @@ export const Player = memo(function Player({
 
         {viewPrefs.tempoSlider ? (
           <div className={styles.tempoOverlay}>
-            <TempoSlider tempo={playback.tempo} onTempo={playback.setTempo}
+            <TempoSlider tempo={playback.tempo} onTempo={playback.setTempo} bpmX100={bpmX100}
+              range={tempoRange} onRange={setTempoRange}
               idle={playback.idle} synced={synced} masterTempo={playback.masterTempo}
               onMasterTempo={playback.setMasterTempo} onReset={resetTempo}
               resetLocked={tempoResetLocked} onUnlock={() => setTempoResetLocked(false)} />
@@ -2871,16 +3053,19 @@ export const Player = memo(function Player({
              hiding it makes the list read as a shorter track. A row rather
              than a button, as the memory list's are, because the ✕ inside a
              set row is one: the row calls the cue, the ✕ clears it. */
-          <div className={styles.cueList}>
+          <div className={`${styles.cueList} ${styles.hotCueGrid}`}>
             {PADS.map((letter) => {
               const cue = hot.at(letter);
               const movable = cue !== null && hot.canEdit && cue.id !== "";
+              const colour = cueStyle(undefined, cue?.colour, viewPrefs.hotCueColor, cue ? cue.outMs > cue.positionMs : false);
+              const isLoop = cue !== null && cue.outMs > cue.positionMs;
               return (
                 <div
                   key={letter}
                   role="button"
                   tabIndex={cue ? 0 : -1}
                   className={styles.cueRow}
+                  style={colour}
                   aria-label={`Hot cue ${letter}`}
                   aria-disabled={cue ? undefined : true}
                   data-empty={cue ? undefined : ""}
@@ -2920,13 +3105,19 @@ export const Player = memo(function Player({
                   <span
                     className={styles.cueChip}
                     data-set={cue ? "" : undefined}
-                    style={cueStyle(undefined, cue?.colour, viewPrefs.hotCueColor)}
+                    style={colour}
                   >
                     {letter}
                   </span>
                   {cue ? (
                     <>
                       <span className={styles.cueTime}>{splitTime(cue.positionMs / 1000).main}</span>
+                      {isLoop ? (
+                        <span className={styles.cueLoop} role="img" aria-label="Loop"
+                          title={`Loop, ${((cue.outMs - cue.positionMs) / 1000).toFixed(1)} s`}>
+                          ↻
+                        </span>
+                      ) : null}
                       <CueName cue={cue} renaming={renamingCue} setRenaming={setRenamingCue}
                         canEdit={hot.canEdit} onSave={(text) => writeCue((edits) => edits.setCueComment(cue.id, text))} />
                       <button

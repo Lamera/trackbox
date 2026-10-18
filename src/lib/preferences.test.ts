@@ -155,6 +155,12 @@ describe("formatKey", () => {
     expect(formatKey("Unknown", "alphanumeric")).toBe("Unknown");
     expect(formatKey("", "alphanumeric")).toBe("");
   });
+
+  it("shows a library that stores Camelot codes in the chosen notation too", () => {
+    expect(formatKey("8A", "classic")).toBe("Am");
+    expect(formatKey("8A", "alphanumeric")).toBe("8A");
+    expect(formatKey("Unknown", "classic")).toBe("Unknown");
+  });
 });
 
 describe("the sliders and the quantize value", () => {

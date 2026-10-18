@@ -16,10 +16,12 @@
  */
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { DeckId, EqBand } from "@/ipc/types";
+import type { BeatFxSettings, DeckId, EqBand } from "@/ipc/types";
 import { getBackend } from "@/ipc/client";
 import { detectPlatform, dispatchBinding, eqKillBand } from "@/lib/shortcuts";
+import { useControllerIntent } from "@/store/useControllerIntent";
 import { usePreferencesContext } from "@/store/usePreferences";
+import { Fader, Knob } from "./MixerControls";
 import styles from "./MixerStrip.module.css";
 
 /** High to low, as the strip is drawn and as the mixer names them. */
@@ -49,16 +51,27 @@ function trimLabel(trim: number): string {
 
 /** One deck's half of the strip: the gain block and the three kill buttons. */
 const Channel = memo(function Channel({
-  deck, flipped, performance,
+  deck, flipped, performance, controller = null,
 }: {
   deck: DeckId;
   performance?: boolean;
   /** Deck B's half is the mirror of deck A's, as the capture has it. */
   flipped?: boolean;
+  /** A connected controller, whose faders start closed until they move. */
+  controller?: string | null;
 }) {
   const [trim, setTrim] = useState(1);
   const [volume, setVolume] = useState(1);
+  // The FLX4 cannot report its knobs, so each is unknown until it moves.
+  const [moved, setMoved] = useState<ReadonlySet<string>>(() => new Set());
+  const pending = (control: string) => controller !== null && !moved.has(control);
+  useEffect(() => {
+    setMoved(new Set());
+    if (controller) setVolume(0);
+  }, [controller]);
   const [eq, setEq] = useState<Record<EqBand, number>>({ high: 0.5, mid: 0.5, low: 0.5 });
+  const [filter, setFilter] = useState(0.5);
+  const [cue, setCue] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [killed, setKilled] = useState<ReadonlySet<EqBand>>(() => new Set());
   const drag = useRef<{ y: number; from: number } | null>(null);
@@ -90,6 +103,39 @@ const Channel = memo(function Channel({
       .then(() => setError(null))
       .catch(() => setError("EQ could not reach the audio engine."));
   }, [deck]);
+
+  const adjustFilter = useCallback((next: number) => {
+    setFilter(next);
+    void getBackend().then((backend) => backend.setChannelFilter(deck, next))
+      .then(() => setError(null))
+      .catch(() => setError("Filter could not reach the audio engine."));
+  }, [deck]);
+
+  const toggleCue = useCallback(() => {
+    setCue((current) => {
+      const next = !current;
+      void getBackend().then((backend) => backend.setChannelCue(deck, next))
+        .then(() => setError(null))
+        .catch(() => setError("Headphone cue could not reach the audio engine."));
+      return next;
+    });
+  }, [deck]);
+
+  // The controller's own knobs already reached the engine; only the strip
+  // has to follow them. CUE is a toggle, which the strip owns.
+  useControllerIntent((intent) => {
+    if (!("deck" in intent) || intent.deck !== deck) return;
+    const control = intent.type === "eq" ? `eq-${intent.band}` : intent.type;
+    if (!moved.has(control)) setMoved((current) => new Set(current).add(control));
+    switch (intent.type) {
+      case "trim": setTrim(intent.value); break;
+      case "volume": setVolume(intent.value); break;
+      case "eq": setEq((current) => ({ ...current, [intent.band]: intent.value })); break;
+      case "filter": setFilter(intent.value); break;
+      case "channelCue": toggleCue(); break;
+      default: break;
+    }
+  });
 
   const toggle = useCallback(
     (band: EqBand) => {
@@ -203,39 +249,81 @@ const Channel = memo(function Channel({
       {performance ? (
         <>
           <span className={styles.channelTitle}>DECK {deck.toUpperCase()}</span>
-          {gain}
-          <div className={styles.eqControls} role="group" aria-label={`Deck ${deck.toUpperCase()} EQ`}>
-            {BANDS.map(({ id, label }) => (
-              <label key={id} className={styles.eqBand}>
-                <span>{label}</span>
-                <input
-                  type="range"
-                  aria-label={`Deck ${deck.toUpperCase()} ${label} EQ`}
-                  min={0} max={1} step={0.01}
-                  value={eq[id]}
-                  onChange={(event) => adjustEq(id, Number(event.currentTarget.value))}
-                  onDoubleClick={() => adjustEq(id, 0.5)}
-                  title="Double-click to reset to neutral"
+          {/* Knobs down one side, the fader beside them towards the centre:
+              the whole channel in the height of its EQ section. */}
+          <div className={styles.channelBody}>
+            <div className={styles.knobColumn}>
+              <div className={styles.knobRow}>
+                <span className={styles.rowLabel}>TRIM</span>
+                <Knob
+                  label={`Deck ${deck.toUpperCase()} gain`}
+                  value={trim} min={0} max={2} origin={1}
+                  onChange={send} onReset={() => send(1)}
+                  valueText={trimLabel(trim)} caption={trimLabel(trim)}
+                  title="Trim; double-click for 0 dB"
+                  pending={pending("trim")}
                 />
-                <span className={styles.eqValue}>{Math.round(eq[id] * 100)}%</span>
-              </label>
-            ))}
+              </div>
+              <div className={styles.eqRows} role="group" aria-label={`Deck ${deck.toUpperCase()} EQ`}>
+                {BANDS.map(({ id, label }) => (
+                  <div key={id} className={styles.knobRow}>
+                    <button
+                      type="button"
+                      className={styles.band}
+                      aria-label={`Deck ${deck.toUpperCase()} ${label} kill`}
+                      aria-pressed={killed.has(id)}
+                      data-killed={killed.has(id) || undefined}
+                      onClick={() => toggle(id)}
+                      title={`Kill ${label}`}
+                    >
+                      {label}
+                    </button>
+                    <Knob
+                      label={`Deck ${deck.toUpperCase()} ${label} EQ`}
+                      value={eq[id]} origin={0.5}
+                      onChange={(next) => adjustEq(id, next)} onReset={() => adjustEq(id, 0.5)}
+                      valueText={`${Math.round(eq[id] * 100)}%`}
+                      title="Double-click to reset to neutral"
+                      pending={pending(`eq-${id}`)}
+                    />
+                  </div>
+                ))}
+              </div>
+              <div className={styles.knobRow}>
+                <span className={styles.rowLabel}>FILTER</span>
+                <Knob
+                  label={`Deck ${deck.toUpperCase()} filter`}
+                  value={filter} origin={0.5}
+                  onChange={adjustFilter} onReset={() => adjustFilter(0.5)}
+                  caption={Math.abs(filter - 0.5) < 0.02 ? "OFF" : filter < 0.5 ? "LPF" : "HPF"}
+                  title="Left: low pass, right: high pass; double-click to turn off"
+                  pending={pending("filter")}
+                />
+              </div>
+            </div>
+            <div className={styles.faderColumn}>
+              <button
+                type="button"
+                className={`${styles.band} ${styles.cueButton}`}
+                aria-label={`Deck ${deck.toUpperCase()} headphone cue`}
+                aria-pressed={cue}
+                data-killed={cue || undefined}
+                onClick={toggleCue}
+                title="Hear this deck on the headphones, before its fader"
+              >
+                CUE
+              </button>
+              <Fader
+                label={`Deck ${deck.toUpperCase()} channel volume`}
+                value={volume}
+                onChange={adjustVolume} onReset={() => adjustVolume(1)}
+                valueText={`${Math.round(volume * 100)}%`}
+                title="Channel fader (post-EQ); double-click to restore unity"
+                pending={pending("volume")}
+              />
+              <span className={styles.knobCaption}>{Math.round(volume * 100)}%</span>
+            </div>
           </div>
-          <span className={styles.killTitle}>EQ KILL</span>
-          {bands}
-          <label className={styles.channelVolume}>
-            <span>CHANNEL</span>
-            <input
-              type="range"
-              aria-label={`Deck ${deck.toUpperCase()} channel volume`}
-              min={0} max={1} step={0.01}
-              value={volume}
-              onChange={(event) => adjustVolume(Number(event.currentTarget.value))}
-              onDoubleClick={() => adjustVolume(1)}
-              title="Channel fader (post-EQ); double-click to restore unity"
-            />
-            <span>{Math.round(volume * 100)}%</span>
-          </label>
           {error ? <span role="alert" className={styles.channelError}>{error}</span> : null}
         </>
       ) : (
@@ -255,18 +343,153 @@ export interface MixerStripProps {
   crossfade?: number;
   /** Expanded two-channel mixing surface; EXPORT keeps its compact strip. */
   performance?: boolean;
+  /** What each deck is playing at, ×100, for BEAT FX to time itself to. */
+  bpmX100?: Record<DeckId, number | null>;
+  /** The sync master, whose BPM times an effect on the master. */
+  masterDeck?: DeckId;
 }
 
-export function MixerStrip({ crossfade = 0.5, onCrossfade, performance = false }: MixerStripProps) {
+/** BEAT ◀ ▶ steps through these, in beats. */
+const FX_BEATS = [0.125, 0.25, 0.5, 0.75, 1, 2, 4, 8];
+const FX_DEFAULT_BEAT = 4;
+
+function beatLabel(beats: number): string {
+  if (beats >= 1) return String(beats);
+  return beats === 0.75 ? "3/4" : `1/${Math.round(1 / beats)}`;
+}
+
+/** BEAT FX: one unit, ECHO or REVERB, on a deck or the master. */
+function BeatFx({ bpmX100, masterDeck, depthPending }: {
+  bpmX100: Record<DeckId, number | null>;
+  masterDeck: DeckId;
+  depthPending: boolean;
+}) {
+  const [on, setOn] = useState(false);
+  const [kind, setKind] = useState<BeatFxSettings["kind"]>("echo");
+  const [beat, setBeat] = useState(FX_DEFAULT_BEAT);
+  const [lever, setLever] = useState<Record<DeckId, boolean>>({ a: false, b: false });
+  const [depth, setDepth] = useState(0.5);
+  const [error, setError] = useState<string | null>(null);
+  // The lever on one channel is that channel; on both, or neither, the master.
+  const target: BeatFxSettings["target"] = lever.a === lever.b ? "master" : lever.a ? "a" : "b";
+  const bpm = (bpmX100[target === "master" ? masterDeck : target] ?? 12_000) / 100;
+  const beats = FX_BEATS[beat] ?? 1;
+  const beatMs = (beats * 60_000) / Math.max(bpm, 1);
+
+  useEffect(() => {
+    void getBackend()
+      .then((backend) => backend.setBeatFx({ on, kind, target, depth, beatMs }))
+      .then(() => setError(null))
+      .catch(() => setError("BEAT FX could not reach the audio engine."));
+  }, [on, kind, target, depth, beatMs]);
+
+  const step = (longer: boolean) =>
+    setBeat((at) => Math.min(Math.max(at + (longer ? 1 : -1), 0), FX_BEATS.length - 1));
+  useControllerIntent((intent) => {
+    switch (intent.type) {
+      case "fxSelect": setKind((current) => (current === "echo" ? "reverb" : "echo")); break;
+      case "fxBeat": step(intent.longer); break;
+      case "fxToggle": setOn((current) => (intent.off ? false : !current)); break;
+      case "fxChannel": setLever((current) => ({ ...current, [intent.deck]: intent.selected })); break;
+      case "fxDepth": setDepth(intent.value); break;
+      default: break;
+    }
+  });
+
+  return (
+    <div className={styles.beatFx} role="group" aria-label="Beat FX">
+      <span>BEAT FX</span>
+      <div role="group" aria-label="Beat FX effect">
+        <button type="button" aria-pressed={kind === "echo"} onClick={() => setKind("echo")}>ECHO</button>
+        <button type="button" aria-pressed={kind === "reverb"} onClick={() => setKind("reverb")}>REVERB</button>
+      </div>
+      <div role="group" aria-label="Beat FX beat">
+        <button type="button" aria-label="Shorter beat" onClick={() => step(false)}>◀</button>
+        <span className={styles.eqValue} aria-live="polite">{beatLabel(beats)}</span>
+        <button type="button" aria-label="Longer beat" onClick={() => step(true)}>▶</button>
+      </div>
+      <div role="group" aria-label="Beat FX channel">
+        <button type="button" aria-pressed={target === "a"} onClick={() => setLever({ a: true, b: false })}>A</button>
+        <button type="button" aria-pressed={target === "b"} onClick={() => setLever({ a: false, b: true })}>B</button>
+        <button type="button" aria-pressed={target === "master"} onClick={() => setLever({ a: false, b: false })}>MST</button>
+      </div>
+      <Knob
+        label="Beat FX level/depth"
+        value={depth}
+        onChange={setDepth} onReset={() => setDepth(0.5)}
+        valueText={`${Math.round(depth * 100)}%`}
+        caption="LEVEL"
+        pending={depthPending}
+      />
+      <button
+        type="button"
+        className={styles.fxOn}
+        aria-pressed={on}
+        aria-label="Beat FX on"
+        onClick={() => setOn((current) => !current)}
+      >
+        ON
+      </button>
+      {error ? <span role="alert" className={styles.channelError}>{error}</span> : null}
+    </div>
+  );
+}
+
+const NO_BPM: Record<DeckId, number | null> = { a: null, b: null };
+
+export function MixerStrip({
+  crossfade = 0.5, onCrossfade, performance = false, bpmX100 = NO_BPM, masterDeck = "a",
+}: MixerStripProps) {
   const [at, setAt] = useState(crossfade);
-  const [isolator, setIsolator] = useState(false);
+  const { preferences, update } = usePreferencesContext();
+  const isolator = preferences.audio.eqCurve === "isolator";
+  const crossfaderOn = preferences.audio.crossfader;
   const [curveError, setCurveError] = useState<string | null>(null);
+  const [phonesMix, setPhonesMix] = useState(0);
+  const [controller, setController] = useState<string | null>(null);
+  const [moved, setMoved] = useState<ReadonlySet<string>>(() => new Set());
+  useEffect(() => setMoved(new Set()), [controller]);
+  const pending = (control: string) => controller !== null && !moved.has(control);
+  const adjustPhonesMix = useCallback((next: number) => {
+    setPhonesMix(next);
+    void getBackend().then((backend) => backend.setHeadphoneMix(next)).catch(() => {});
+  }, []);
+  useControllerIntent((intent) => {
+    // Already applied in the engine; the crossfader's effect below sends it
+    // again, which is the same value and harmless.
+    if (intent.type === "crossfader") setAt(intent.value);
+    if (intent.type === "headphoneMix") setPhonesMix(intent.value);
+    if ((intent.type === "crossfader" || intent.type === "headphoneMix" || intent.type === "fxDepth")
+      && !moved.has(intent.type)) {
+      setMoved((current) => new Set(current).add(intent.type));
+    }
+  });
+  useEffect(() => {
+    let live = true;
+    let stop: (() => void) | undefined;
+    void getBackend().then(async (backend) => {
+      stop = backend.onControllerStatus((status) => setController(status.name));
+      const status = await backend.controllerStatus();
+      if (live) setController(status.name);
+      else stop();
+    }).catch(() => {});
+    return () => {
+      live = false;
+      stop?.();
+    };
+  }, []);
   const chooseCurve = useCallback((next: boolean) => {
-    setIsolator(next);
-    void getBackend().then((backend) => backend.setEqCurve(next))
+    update("audio", { eqCurve: next ? "isolator" : "eq" });
+  }, [update]);
+  // The remembered curve and crossfader reach the engine on start and on every change.
+  useEffect(() => {
+    void getBackend().then((backend) => backend.setEqCurve(isolator))
       .then(() => setCurveError(null))
       .catch(() => setCurveError("EQ curve could not reach the audio engine."));
-  }, []);
+  }, [isolator]);
+  useEffect(() => {
+    void getBackend().then((backend) => backend.setCrossfaderOn(crossfaderOn)).catch(() => {});
+  }, [crossfaderOn]);
   const track = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -292,46 +515,92 @@ export function MixerStrip({ crossfade = 0.5, onCrossfade, performance = false }
       {performance ? (
         <div key="performance-header" className={styles.mixerHeader}>
           <span>MIXER</span>
+          {controller ? (
+            <span className={styles.killTitle} title={`Controller connected: ${controller}`}>
+              {controller.includes("DDJ-FLX4") ? "DDJ-FLX4" : "MIDI"}
+            </span>
+          ) : null}
           <div role="group" aria-label="EQ curve">
             <button type="button" aria-pressed={!isolator} onClick={() => chooseCurve(false)}>EQ</button>
             <button type="button" aria-pressed={isolator} onClick={() => chooseCurve(true)}>ISOLATOR</button>
           </div>
+          <button
+            type="button"
+            aria-pressed={crossfaderOn}
+            title="Crossfader on; off leaves both decks at their channel faders"
+            onClick={() => update("audio", { crossfader: !crossfaderOn })}
+          >
+            X-FADER
+          </button>
           {curveError ? <span role="alert">{curveError}</span> : null}
         </div>
       ) : null}
-      <Channel key="a" deck="a" performance={performance} />
-      <div key="crossfader" className={styles.fader}>
-        <span className={styles.deckLabel}>A</span>
-        <div
-          ref={track}
-          className={styles.faderTrack}
-          role="slider"
-          tabIndex={0}
-          aria-label="Crossfader"
-          aria-orientation="vertical"
-          aria-valuemin={0}
-          aria-valuemax={1}
-          aria-valuenow={Number(at.toFixed(2))}
-          aria-valuetext={at === 0.5 ? "Both decks" : at < 0.5 ? "Towards A" : "Towards B"}
-          onPointerDown={(event) => {
-            event.currentTarget.setPointerCapture(event.pointerId);
-            move(event.clientY);
-          }}
-          onPointerMove={(event) => {
-            if (event.buttons === 0) return;
-            move(event.clientY);
-          }}
-          onDoubleClick={() => setAt(0.5)}
-          onKeyDown={(event) => {
-            if (event.key === "ArrowUp") setAt((v) => Math.max(v - 0.05, 0));
-            if (event.key === "ArrowDown") setAt((v) => Math.min(v + 0.05, 1));
-          }}
-        >
-          <span className={styles.faderHandle} style={{ top: `${at * 100}%` }} aria-hidden />
+      <Channel key="a" deck="a" performance={performance} controller={controller} />
+      {performance ? (
+        <div key="crossfader" className={styles.fader}>
+          <Knob
+            label="Headphones mix"
+            value={phonesMix}
+            onChange={adjustPhonesMix} onReset={() => adjustPhonesMix(0)}
+            valueText={`${Math.round(phonesMix * 100)}% master`}
+            caption="HP MIX"
+            title="Headphones: cue on the left, master on the right"
+            pending={pending("headphoneMix")}
+          />
+          {crossfaderOn ? (
+            <>
+              <span className={styles.deckLabel}>A</span>
+              <Fader
+                horizontal
+                label="Crossfader"
+                value={at}
+                onChange={setAt} onReset={() => setAt(0.5)}
+                detent={DETENT}
+                pending={pending("crossfader")}
+                valueText={at === 0.5 ? "Both decks" : at < 0.5 ? "Towards A" : "Towards B"}
+              />
+              <span className={styles.deckLabel}>B</span>
+            </>
+          ) : null}
         </div>
-        <span className={styles.deckLabel}>B</span>
-      </div>
-      <Channel key="b" deck="b" flipped performance={performance} />
+      ) : !crossfaderOn ? (
+        <div key="crossfader" className={styles.fader} />
+      ) : (
+        <div key="crossfader" className={styles.fader}>
+          <span className={styles.deckLabel}>A</span>
+          <div
+            ref={track}
+            className={styles.faderTrack}
+            role="slider"
+            tabIndex={0}
+            aria-label="Crossfader"
+            aria-orientation="vertical"
+            aria-valuemin={0}
+            aria-valuemax={1}
+            aria-valuenow={Number(at.toFixed(2))}
+            aria-valuetext={!crossfaderOn ? "Off" : at === 0.5 ? "Both decks" : at < 0.5 ? "Towards A" : "Towards B"}
+            aria-disabled={!crossfaderOn || undefined}
+            onPointerDown={(event) => {
+              event.currentTarget.setPointerCapture(event.pointerId);
+              move(event.clientY);
+            }}
+            onPointerMove={(event) => {
+              if (event.buttons === 0) return;
+              move(event.clientY);
+            }}
+            onDoubleClick={() => setAt(0.5)}
+            onKeyDown={(event) => {
+              if (event.key === "ArrowUp") setAt((v) => Math.max(v - 0.05, 0));
+              if (event.key === "ArrowDown") setAt((v) => Math.min(v + 0.05, 1));
+            }}
+          >
+            <span className={styles.faderHandle} style={{ top: `${at * 100}%` }} aria-hidden />
+          </div>
+          <span className={styles.deckLabel}>B</span>
+        </div>
+      )}
+      <Channel key="b" deck="b" flipped performance={performance} controller={controller} />
+      {performance ? <BeatFx key="beat-fx" bpmX100={bpmX100} masterDeck={masterDeck} depthPending={pending("fxDepth")} /> : null}
     </div>
   );
 }

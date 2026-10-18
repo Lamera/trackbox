@@ -44,7 +44,9 @@ const settle = () =>
     await Promise.resolve();
   });
 
-const toggle = () => host.querySelector<HTMLInputElement>('input[role="switch"]');
+const toggle = () =>
+  [...host.querySelectorAll<HTMLInputElement>('input[role="switch"]')]
+    .find((input) => input.closest("label")?.textContent === "Enable limiter") ?? null;
 const slider = (label: string) => host.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`);
 
 /**
@@ -78,7 +80,7 @@ afterEach(() => {
 
 describe("AudioPane's limiter controls", () => {
   it("shows the ceiling and release as the window writes them", async () => {
-    mount(DEFAULT_LIMITER);
+    mount({ ...DEFAULT_LIMITER, enabled: false });
     await settle();
     expect(host.textContent).toContain("Ceiling 0.0 dB");
     expect(host.textContent).toContain("Release 250 ms");
@@ -88,7 +90,7 @@ describe("AudioPane's limiter controls", () => {
   });
 
   it("the switch sends the new enabled state alone", async () => {
-    mount(DEFAULT_LIMITER);
+    mount({ ...DEFAULT_LIMITER, enabled: false });
     await settle();
     act(() => toggle()?.click());
     expect(onLimiterChange).toHaveBeenCalledWith({ enabled: true });
@@ -159,7 +161,7 @@ it("reset restores ceiling and release without switching the limiter off", async
 });
 
 it("shows bypassed reduction as zero while continuing to meter output", async () => {
-  mount(DEFAULT_LIMITER, 4, 0.5, 0.5);
+  mount({ ...DEFAULT_LIMITER, enabled: false }, 4, 0.5, 0.5);
   await settle();
   expect(host.querySelector('[aria-label="Gain reduction"]')?.getAttribute("aria-valuenow")).toBe("0");
   expect(host.querySelector('[aria-label="Gain reduction"]')?.getAttribute("aria-valuetext")).toBe("Limiter off");

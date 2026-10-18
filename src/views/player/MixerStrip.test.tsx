@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { DEFAULT_PREFERENCES } from "@/lib/preferences";
+import type { BeatFxSettings, ControllerIntent } from "@/ipc/types";
 import { PreferencesProvider } from "@/store/usePreferences";
 import { MixerStrip } from "./MixerStrip";
 
@@ -13,21 +14,49 @@ const setChannelKill = vi.fn(() => Promise.resolve());
 const setChannelBand = vi.fn(() => Promise.resolve());
 const setChannelVolume = vi.fn(() => Promise.resolve());
 const setEqCurve = vi.fn(() => Promise.resolve());
+const setChannelCue = vi.fn(() => Promise.resolve());
+const setChannelFilter = vi.fn(() => Promise.resolve());
+const setHeadphoneMix = vi.fn(() => Promise.resolve());
+const setCrossfaderOn = vi.fn(() => Promise.resolve());
+const setBeatFx = vi.fn((_fx: BeatFxSettings) => Promise.resolve());
+const update = vi.fn();
+const intents = new Set<(intent: ControllerIntent) => void>();
+const statuses = new Set<(status: { name: string | null }) => void>();
 vi.mock("@/ipc/client", () => ({
   getBackend: () => Promise.resolve({
-    setChannelKill, setChannelBand, setChannelVolume, setEqCurve,
+    setChannelKill, setChannelBand, setChannelVolume, setEqCurve, setChannelCue, setChannelFilter, setHeadphoneMix,
+    setCrossfaderOn, setBeatFx,
     setChannelTrim: () => Promise.resolve(), setCrossfade: () => Promise.resolve(),
+    onControllerIntent: (listener: (intent: ControllerIntent) => void) => {
+      intents.add(listener);
+      return () => intents.delete(listener);
+    },
+    onControllerStatus: (listener: (status: { name: string | null }) => void) => {
+      statuses.add(listener);
+      return () => statuses.delete(listener);
+    },
+    controllerStatus: () => Promise.resolve({ name: null }),
   }),
 }));
+
+const send = (intent: ControllerIntent) => act(() => { for (const listener of intents) listener(intent); });
 
 let host: HTMLDivElement;
 let root: Root;
 
-function mount(overrides: Record<string, { key: string; shiftKey?: boolean }>, performance = false) {
-  const preferences = { ...DEFAULT_PREFERENCES, keyboard: { ...DEFAULT_PREFERENCES.keyboard, overrides } };
+function mount(
+  overrides: Record<string, { key: string; shiftKey?: boolean }>,
+  performance = false,
+  audio: Partial<typeof DEFAULT_PREFERENCES.audio> = {},
+) {
+  const preferences = {
+    ...DEFAULT_PREFERENCES,
+    keyboard: { ...DEFAULT_PREFERENCES.keyboard, overrides },
+    audio: { ...DEFAULT_PREFERENCES.audio, ...audio },
+  };
   act(() => root.render(
-    <PreferencesProvider value={{ preferences, update: vi.fn(), reset: vi.fn() }}>
-      <MixerStrip performance={performance} />
+    <PreferencesProvider value={{ preferences, update, reset: vi.fn() }}>
+      <MixerStrip performance={performance} bpmX100={{ a: 12_000, b: 12_800 }} masterDeck="b" />
     </PreferencesProvider>,
   ));
 }
@@ -41,6 +70,12 @@ beforeEach(() => {
   setChannelBand.mockClear();
   setChannelVolume.mockClear();
   setEqCurve.mockClear();
+  setChannelCue.mockClear();
+  setChannelFilter.mockClear();
+  setHeadphoneMix.mockClear();
+  setCrossfaderOn.mockClear();
+  setBeatFx.mockClear();
+  update.mockClear();
 });
 afterEach(() => { act(() => root.unmount()); host.remove(); });
 
@@ -69,15 +104,15 @@ it("does nothing while the kill keys are unbound", async () => {
 
 it("exposes actual post-EQ channel faders and neutral 3-band EQ only in PERFORMANCE", async () => {
   mount({}, true);
-  const left = host.querySelector<HTMLInputElement>('input[aria-label="Deck A channel volume"]');
-  const right = host.querySelector<HTMLInputElement>('input[aria-label="Deck B channel volume"]');
+  const left = host.querySelector<HTMLElement>('[role="slider"][aria-label="Deck A channel volume"]');
+  const right = host.querySelector<HTMLElement>('[role="slider"][aria-label="Deck B channel volume"]');
   expect(left).not.toBeNull();
   expect(right).not.toBeNull();
-  expect(left?.value).toBe("1");
-  const high = host.querySelector<HTMLInputElement>('input[aria-label="Deck A HIGH EQ"]');
-  const low = host.querySelector<HTMLInputElement>('input[aria-label="Deck B LOW EQ"]');
-  expect(high?.value).toBe("0.5");
-  expect(low?.value).toBe("0.5");
+  expect(left?.getAttribute("aria-valuenow")).toBe("1");
+  const high = host.querySelector<HTMLElement>('[role="slider"][aria-label="Deck A HIGH EQ"]');
+  const low = host.querySelector<HTMLElement>('[role="slider"][aria-label="Deck B LOW EQ"]');
+  expect(high?.getAttribute("aria-valuenow")).toBe("0.5");
+  expect(low?.getAttribute("aria-valuenow")).toBe("0.5");
 
   act(() => {
     high?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
@@ -87,15 +122,115 @@ it("exposes actual post-EQ channel faders and neutral 3-band EQ only in PERFORMA
   expect(setChannelBand).toHaveBeenCalledWith("a", "high", 0.5);
   expect(setChannelVolume).toHaveBeenCalledWith("a", 1);
 
+  act(() => { high?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true })); });
+  act(() => { left?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })); });
+  await act(async () => {});
+  expect(setChannelBand).toHaveBeenLastCalledWith("a", "high", 0.525);
+  expect(setChannelVolume).toHaveBeenLastCalledWith("a", 0.95);
+
   const isolator = [...host.querySelectorAll("button")].find((button) => button.textContent === "ISOLATOR");
   act(() => isolator?.click());
   await act(async () => {});
+  expect(update).toHaveBeenCalledWith("audio", { eqCurve: "isolator" });
+});
+
+it("sends the remembered EQ curve and crossfader to the engine", async () => {
+  mount({}, true, { eqCurve: "isolator", crossfader: false });
+  await act(async () => {});
   expect(setEqCurve).toHaveBeenCalledWith(true);
+  expect(setCrossfaderOn).toHaveBeenCalledWith(false);
+  expect(host.querySelector('[aria-label="Crossfader"]')).toBeNull();
+  const toggle = [...host.querySelectorAll("button")].find((button) => button.textContent === "X-FADER");
+  act(() => toggle?.click());
+  expect(update).toHaveBeenCalledWith("audio", { crossfader: true });
+});
+
+it("times BEAT FX to the beat and follows the controller's FX section", async () => {
+  mount({}, true);
+  await act(async () => {});
+  // One beat at the master deck's 128 BPM.
+  expect(setBeatFx).toHaveBeenLastCalledWith({ on: false, kind: "echo", target: "master", depth: 0.5, beatMs: 60_000 / 128 });
+  send({ type: "fxChannel", deck: "a", selected: true });
+  send({ type: "fxSelect", previous: false });
+  send({ type: "fxBeat", longer: true });
+  send({ type: "fxDepth", value: 0.25 });
+  send({ type: "fxToggle", off: false });
+  await act(async () => {});
+  // Two beats at deck A's 120 BPM, on deck A.
+  expect(setBeatFx).toHaveBeenLastCalledWith({ on: true, kind: "reverb", target: "a", depth: 0.25, beatMs: 1_000 });
+  send({ type: "fxToggle", off: true });
+  await act(async () => {});
+  expect(setBeatFx.mock.lastCall?.[0].on).toBe(false);
 });
 
 it("keeps the measured EXPORT mixer compact and without PERFORMANCE-only controls", () => {
   mount({});
   expect(host.querySelector('[data-performance]')).toBeNull();
-  expect(host.querySelector('input[aria-label="Deck A channel volume"]')).toBeNull();
-  expect(host.querySelector('input[aria-label="Deck B LOW EQ"]')).toBeNull();
+  expect(host.querySelector('[aria-label="Deck A channel volume"]')).toBeNull();
+  expect(host.querySelector('[aria-label="Deck B LOW EQ"]')).toBeNull();
+  expect(host.querySelector('button[aria-label="Deck A headphone cue"]')).toBeNull();
+  expect(host.querySelector('[aria-label="Headphones mix"]')).toBeNull();
+});
+
+it("sends a channel to the headphones and sets the filter and the headphones mix", async () => {
+  mount({}, true);
+  const cue = host.querySelector<HTMLButtonElement>('button[aria-label="Deck B headphone cue"]');
+  act(() => cue?.click());
+  await act(async () => {});
+  expect(setChannelCue).toHaveBeenCalledWith("b", true);
+  expect(cue?.getAttribute("aria-pressed")).toBe("true");
+
+  const filter = host.querySelector<HTMLElement>('[role="slider"][aria-label="Deck A filter"]');
+  expect(filter?.getAttribute("aria-valuenow")).toBe("0.5");
+  act(() => { filter?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })); });
+  await act(async () => {});
+  expect(setChannelFilter).toHaveBeenCalledWith("a", 0.5);
+
+  const mix = host.querySelector<HTMLElement>('[role="slider"][aria-label="Headphones mix"]');
+  act(() => { mix?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })); });
+  await act(async () => {});
+  expect(setHeadphoneMix).toHaveBeenCalledWith(0);
+});
+
+it("follows a controller's knobs and toggles CUE from its button", async () => {
+  mount({}, true);
+  await act(async () => {});
+  send({ type: "volume", deck: "a", value: 0.25 });
+  send({ type: "eq", deck: "b", band: "low", value: 0 });
+  send({ type: "filter", deck: "a", value: 0.1 });
+  send({ type: "headphoneMix", value: 0.8 });
+  send({ type: "channelCue", deck: "a" });
+  await act(async () => {});
+  const now = (label: string) =>
+    host.querySelector(`[role="slider"][aria-label="${label}"]`)?.getAttribute("aria-valuenow");
+  expect(now("Deck A channel volume")).toBe("0.25");
+  expect(now("Deck B LOW EQ")).toBe("0");
+  expect(now("Deck A filter")).toBe("0.1");
+  expect(now("Headphones mix")).toBe("0.8");
+  expect(setChannelCue).toHaveBeenCalledWith("a", true);
+  // The engine already has the knob positions; the strip does not send them back.
+  expect(setChannelVolume).not.toHaveBeenCalled();
+});
+
+it("shows a connected controller in the mixer header", async () => {
+  mount({}, true);
+  await act(async () => {});
+  act(() => { for (const listener of statuses) listener({ name: "DDJ-FLX4" }); });
+  expect(host.textContent).toContain("DDJ-FLX4");
+});
+
+it("marks a controller's knobs as unknown until they move", async () => {
+  mount({}, true);
+  await act(async () => {});
+  const high = () => host.querySelector('[aria-label="Deck A HIGH EQ"]');
+  expect(high()?.hasAttribute("data-pending")).toBe(false);
+  act(() => { for (const listener of statuses) listener({ name: "DDJ-FLX4" }); });
+  expect(high()?.hasAttribute("data-pending")).toBe(true);
+  expect(host.querySelector('[aria-label="Crossfader"]')?.hasAttribute("data-pending")).toBe(true);
+  send({ type: "eq", deck: "a", band: "high", value: 0.7 });
+  send({ type: "crossfader", value: 0.2 });
+  await act(async () => {});
+  expect(high()?.hasAttribute("data-pending")).toBe(false);
+  expect(host.querySelector('[aria-label="Deck A MID EQ"]')?.hasAttribute("data-pending")).toBe(true);
+  expect(host.querySelector('[aria-label="Crossfader"]')?.hasAttribute("data-pending")).toBe(false);
 });

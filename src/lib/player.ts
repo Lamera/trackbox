@@ -196,17 +196,19 @@ export function zoomBy(bars: number, direction: number): number {
   return ZOOM_STEPS[to] ?? DETAIL_BARS;
 }
 
+/** The zoom's bars are counted at this tempo, so every deck scrolls at the same speed. */
+export const DETAIL_REFERENCE_BPM = 128;
+
 /**
- * What fraction of a track `bars` covers at a given tempo.
+ * What fraction of a track the scrolling waveform shows.
  *
- * Falls back to a fraction of the whole track when the tempo or length is
- * unknown, so an unanalysed track still draws something rather than dividing
- * by zero.
+ * A fixed stretch of real time, as rekordbox draws it: both decks scroll at
+ * one speed, and a faster tempo puts more of the track, and narrower beats,
+ * in the same width.
  */
-export function detailSpan(bars: number, bpmX100: number, durationSec: number): number {
-  if (bpmX100 <= 0 || durationSec <= 0) return 0.08;
-  const bpm = bpmX100 / 100;
-  const seconds = (bars * BEATS_PER_BAR * 60) / bpm;
+export function detailSpan(bars: number, tempo: number, durationSec: number): number {
+  if (durationSec <= 0) return 0.08;
+  const seconds = ((bars * BEATS_PER_BAR * 60) / DETAIL_REFERENCE_BPM) * (tempo > 0 ? tempo : 1);
   // Never more than the whole track, and never so small that a rounding error
   // collapses the window to nothing.
   return Math.min(1, Math.max(seconds / durationSec, 1e-4));
@@ -964,6 +966,18 @@ export function faderToTempo(at: number, range: TempoRange): number {
   const clamped = Math.min(Math.max(at, -1), 1);
   const pct = clamped >= 0 ? clamped * up : clamped * down;
   return 1 + pct / 100;
+}
+
+/** How close to a whole BPM (or the track's own tempo) a fader lands on it. */
+export const TEMPO_SNAP_BPM = 0.15;
+
+/** A fader's tempo, caught on the whole BPM it is close to: 127.93 plays at 128. */
+export function snapTempo(tempo: number, bpmX100: number): number {
+  if (bpmX100 <= 0) return tempo;
+  const bpm = (tempo * bpmX100) / 100;
+  if (Math.abs(bpm - bpmX100 / 100) < TEMPO_SNAP_BPM) return 1;
+  const whole = Math.round(bpm);
+  return Math.abs(bpm - whole) < TEMPO_SNAP_BPM ? (whole * 100) / bpmX100 : tempo;
 }
 
 /**

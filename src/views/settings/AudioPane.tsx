@@ -173,6 +173,37 @@ export function AudioPane({ limiter, onLimiterChange, reduction, vu, peakLeft = 
       />
     </Section>
 
+    <Section title="Mixer">
+      <Select
+        label="EQ curve"
+        value={prefs.eqCurve}
+        choices={[
+          { value: "eq", label: "EQ (bands cut to −26 dB)" },
+          { value: "isolator", label: "ISOLATOR (bands cut to silence)" },
+        ]}
+        onChange={(eqCurve) => set({ eqCurve })}
+      />
+      <Toggle label="Crossfader" checked={prefs.crossfader} onChange={(crossfader) => set({ crossfader })} />
+    </Section>
+
+    <Section title="Headphones">
+      <Select
+        label="Headphones"
+        value={prefs.headphones}
+        choices={[
+          { value: "auto", label: "Automatic (DDJ-FLX4: outputs 3/4)" },
+          { value: "off", label: "Off" },
+          { value: "lanes", label: "Outputs 3/4, master on 1/2" },
+          { value: "split", label: "Split: cue left, master right" },
+        ]}
+        onChange={(headphones) => set({ headphones })}
+      />
+      <Note>
+        Takes effect the next time a deck plays. A device with fewer than four
+        outputs is opened without separate headphones.
+      </Note>
+    </Section>
+
     <Section title="RBXport Master Limiter">
       <div className={limiterStyles.panel}>
       <div className={limiterStyles.header}>

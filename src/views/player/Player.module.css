@@ -667,22 +667,55 @@
    things the arrow keys are about to move. */
 .player[data-armed] .playhead { background: var(--c-playhead-armed); }
 
+/* The whole track's head has to be found at a glance: two points wide with a
+   dark edge, a notch above it, and what has played dimmed behind it. */
+.overviewHead {
+  z-index: 2;
+  width: 2px;
+  margin-left: -1px;
+  box-shadow: 0 0 0 1px var(--c-black);
+}
+.overviewHead::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 100%;
+  width: 100vw;
+  background: color-mix(in srgb, var(--c-black) 45%, transparent);
+}
+.overviewHead::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 50%;
+  translate: -50% 0;
+  border: 5px solid transparent;
+  border-bottom: 0;
+  border-top-color: var(--c-text);
+}
+.player[data-armed] .overviewHead::after { border-top-color: var(--c-playhead-armed); }
+
 /* Cues sit over the waveform, the grid and the bar count — a marker behind a
    downbeat line is a marker nobody can find. A hot cue sits over a memory cue:
    rekordbox keeps one beside each hot cue, and the user's crop shows the badge
    covering the red triangle's point. */
 /* A loop is a band over the waveform: a stored memory loop dim, the deck's
-   own lit while it plays, in the pad blue the AU button lights with. */
+   own lit while it plays, in the orange rekordbox draws a loop in, with its
+   in and out points edged so the active one reads at a glance. */
 .loopBand {
   position: absolute;
   top: 0;
   bottom: 0;
-  background: var(--c-pad-active);
+  background: var(--c-cue-orange);
   opacity: 0.18;
   pointer-events: none;
   z-index: 1;
 }
-.loopBand[data-active] { opacity: 0.38; }
+.loopBand[data-active] {
+  opacity: 0.45;
+  box-shadow: inset 2px 0 0 var(--c-cue-orange), inset -2px 0 0 var(--c-cue-orange);
+}
 
 .memoryCue,
 .hotCue {
@@ -1166,6 +1199,52 @@ button.cueDelete:disabled { color: var(--c-icon-off); }
    the slot it would land on is outlined. */
 .cueRow[data-dragging] { opacity: .4; }
 .cueRow[data-drop] { outline: 1px solid var(--c-accent); outline-offset: -1px; }
+
+/* The eight hot cues as the pads lie under the hand: A–D down the left, E–H
+   down the right, all eight in view at once, each tinted with its colour. */
+.hotCueGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(4, minmax(var(--s-cue-row-h), 1fr));
+  grid-auto-flow: column;
+  padding-bottom: var(--s-cue-list-inset);
+}
+.hotCueGrid .cueRow {
+  position: relative;
+  height: auto;
+  min-width: 0;
+  overflow: hidden;
+  gap: 4px;
+  padding: 0 4px 0 3px;
+  border-left: 3px solid transparent;
+  border-radius: 2px;
+}
+.hotCueGrid .cueRow:not([data-empty]) {
+  border-left-color: var(--cue-colour, var(--c-pad-set));
+  background: color-mix(in srgb, var(--cue-colour, var(--c-pad-set)) 16%, var(--c-cue-row));
+}
+.hotCueGrid .cueRow:hover:not([data-empty]) {
+  background: color-mix(in srgb, var(--cue-colour, var(--c-pad-set)) 28%, var(--c-cue-row));
+}
+.hotCueGrid .cueRow[data-empty] { opacity: 0.55; }
+.cueLoop {
+  flex: none;
+  font-weight: 700;
+  color: var(--c-cue-orange);
+}
+/* The ✕ over the cell's right end, and only under the pointer, so a narrow
+   cell keeps its time and loop mark. */
+.hotCueGrid button.cueDelete {
+  opacity: 0;
+  position: absolute;
+  top: 50%;
+  right: 2px;
+  margin: 0;
+  translate: 0 -50%;
+  background: var(--c-cue-row);
+}
+.hotCueGrid .cueRow:hover button.cueDelete,
+.hotCueGrid .cueRow:focus-within button.cueDelete { opacity: 1; }
 
 /* The INFO tab is DeckInfo.module.css. */
 
