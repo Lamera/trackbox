@@ -25,6 +25,11 @@ Windows; other platforms do not detect it.
 Hardware controls also act in EXPORT mode on the decks it shows, but only
 PERFORMANCE lays out both decks and the mixer they map to.
 
+Drag the black line under the decks down for taller waveforms and a shorter
+track list; double-click it to go back. Each arrangement (one deck, two
+stacked, two side by side) keeps its own height, and Preferences › View ›
+**Reset panel sizes** resets all of them.
+
 ### Headphones routing
 
 Preferences › Audio › Headphones decides where the cue is heard. Changes take

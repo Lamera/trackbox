@@ -19,7 +19,7 @@ import { useControllerIntent } from "@/store/useControllerIntent";
  */
 import type { TrackSearchField } from "@/lib/search";
 
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { droppedFilePaths, getBackend, subscribeNativeFileDrops } from "@/ipc/client";
 import type {
   Backend, DeckId, Device, ImportReport, LibraryProblem, LibrarySummary, RowDto, SortColumn, TrackField, TreeNode, ViewSpec,
@@ -35,7 +35,7 @@ import { detectPlatform, dispatch, isTyping, menuAccelerator } from "@/lib/short
 import { hasEditHistory, runEditHistory, setLibraryEditHistory } from "@/lib/editHistory";
 import { transposeKey } from "@/lib/camelot";
 import { gainToKnob, KNOB_FULL, knobToGain } from "@/lib/volume";
-import { clampWidth, TREE_BOUNDS } from "@/lib/splitter";
+import { clampWidth, deckBounds, TREE_BOUNDS } from "@/lib/splitter";
 import { exportSummary } from "@/lib/exportSummary";
 import { deviceId, devicePath, renamedDevice } from "@/lib/devices";
 import { DEVICE_ASKS, deviceNodeId, deviceParentFor, devicePlaylistsOf, isDeviceLibraryKind, parseDeviceNodeId } from "@/lib/deviceLibrary";
@@ -54,7 +54,7 @@ import { useUpdater } from "@/store/useUpdater";
 import { UpdateReadyNotice } from "@/views/update/UpdateReadyNotice";
 import noticeStyles from "@/views/update/UpdateReadyNotice.module.css";
 import { MasterOutputProvider, MasterOutputConnection, useMasterControls, useMasterDisplay } from "@/store/MasterOutput";
-import { asLayout, deckCount, isFullDeck, type PlayerLayout } from "@/lib/layout";
+import { asLayout, DECK_FLOOR_TOKEN, deckArrangement, deckCount, isFullDeck, type PlayerLayout } from "@/lib/layout";
 import { asWaveformOrientation, asWorkspaceMode, layoutForWorkspace, readExportLayout, WORKSPACE_MODE_KEY, EXPORT_LAYOUT_KEY, PERFORMANCE_WAVEFORM_KEY, type WaveformOrientation, type WorkspaceMode } from "@/lib/workspaceMode";
 import { FIELD_LABEL, InfoPanel } from "@/views/info/InfoPanel";
 import { SubBrowser } from "@/views/subbrowser/SubBrowser";
@@ -118,6 +118,11 @@ type BrowseZone = "rail" | "tree" | "list" | "suggest";
  * in and the longest a Stop waits.
  */
 const ADD_SLICE = 100;
+
+/** The deck band's height, from its gutter: the decks less the gutter itself. */
+function bandHeight(gutter: HTMLElement): number {
+  return (gutter.parentElement?.offsetHeight ?? 0) - gutter.offsetHeight;
+}
 
 function ConnectedPreferences(props: Omit<React.ComponentProps<typeof Preferences>, "reduction" | "vu" | "peakLeft" | "peakRight">) {
   const master = useMasterDisplay();
@@ -412,6 +417,13 @@ function AppBody() {
   const [treeWidth, setTreeWidth] = useState(restored.treeWidth);
   const bodyRef = useRef<HTMLDivElement>(null);
   const dragFrom = useRef<{ x: number; width: number } | null>(null);
+  // The decks' height, dragged on the gutter under them.
+  const [deckHeights, setDeckHeights] = useState(restored.deckHeights);
+  const [deckSpace, setDeckSpace] = useState(0);
+  const windowRef = useRef<HTMLDivElement>(null);
+  const decksRef = useRef<HTMLDivElement>(null);
+  const linkStripRef = useRef<HTMLDivElement>(null);
+  const deckDrag = useRef<{ y: number; height: number } | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const clock = useClock();
   // The table's layout follows the kind of thing being browsed, as
@@ -1079,6 +1091,88 @@ function AppBody() {
     dragFrom.current = null;
     event.currentTarget.releasePointerCapture(event.pointerId);
   }, []);
+
+  const arrangement = deckArrangement(
+    layout,
+    workspaceMode === "performance" && performanceWaveform === "vertical",
+  );
+  const [deckFloor, browseMin] = useMemo(() => {
+    const root = getComputedStyle(document.documentElement);
+    const px = (token: string) => Number.parseFloat(root.getPropertyValue(token)) || 0;
+    return [arrangement === null ? 0 : px(DECK_FLOOR_TOKEN[arrangement]), px("--s-browse-min-h")];
+  }, [arrangement]);
+  const storedDeckHeight = arrangement === null ? undefined : deckHeights[arrangement];
+  const deckHeight = storedDeckHeight === undefined
+    ? undefined
+    : clampWidth(storedDeckHeight, deckBounds(deckSpace, deckFloor, browseMin));
+
+  // What the decks and the browser share: the window less the bars above and
+  // below them. Not decks plus browser, which overstates it once a short
+  // window has squeezed the browser to nothing.
+  const measureDeckSpace = useCallback(() => {
+    const win = windowRef.current;
+    const decks = decksRef.current;
+    if (!win || !decks) return;
+    const status = win.lastElementChild instanceof HTMLElement ? win.lastElementChild.offsetHeight : 0;
+    const below = status + (linkStripRef.current?.offsetHeight ?? 0);
+    const top = decks.getBoundingClientRect().top - win.getBoundingClientRect().top;
+    setDeckSpace(Math.round(win.clientHeight - top - below));
+  }, []);
+  useLayoutEffect(() => {
+    measureDeckSpace();
+    const win = windowRef.current;
+    const body = bodyRef.current;
+    if (!win || !body || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measureDeckSpace);
+    observer.observe(win);
+    observer.observe(body);
+    return () => {
+      observer.disconnect();
+    };
+  }, [arrangement, measureDeckSpace]);
+
+  const resizeDecks = useCallback((height: number) => {
+    if (arrangement === null) return;
+    setDeckHeights((was) => ({
+      ...was,
+      [arrangement]: clampWidth(height, deckBounds(deckSpace, deckFloor, browseMin)),
+    }));
+  }, [arrangement, deckSpace, deckFloor, browseMin]);
+
+  const resetDecks = useCallback(() => {
+    if (arrangement === null) return;
+    setDeckHeights((was) => Object.fromEntries(
+      Object.entries(was).filter(([key]) => key !== arrangement),
+    ));
+  }, [arrangement]);
+
+  const onDeckSplitterDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    deckDrag.current = { y: event.clientY, height: bandHeight(event.currentTarget) };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  }, []);
+
+  const onDeckSplitterMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const from = deckDrag.current;
+    if (from) resizeDecks(from.height + event.clientY - from.y);
+  }, [resizeDecks]);
+
+  const onDeckSplitterUp = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    deckDrag.current = null;
+    event.currentTarget.releasePointerCapture(event.pointerId);
+  }, []);
+
+  const onDeckSplitterKey = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    const step = event.shiftKey ? 50 : 10;
+    const now = bandHeight(event.currentTarget);
+    if (event.key === "ArrowDown") resizeDecks(now + step);
+    else if (event.key === "ArrowUp") resizeDecks(now - step);
+    else if (event.key === "Home") resetDecks();
+    else return;
+    // Arrows here move the gutter, not the track list's selection.
+    event.preventDefault();
+    event.stopPropagation();
+  }, [resizeDecks, resetDecks]);
 
   /** Runs one edit and reports what happened, refusals included. */
   const runEdit = useCallback(
@@ -2386,6 +2480,7 @@ function AppBody() {
           setTreeWidth(clampWidth(305, bounds()));
           setSubWidth(DEFAULT_SUB_WIDTH);
           setSubTreeWidth(DEFAULT_SUB_TREE_WIDTH);
+          setDeckHeights({});
         }
       });
     });
@@ -2783,8 +2878,9 @@ function AppBody() {
       trafficLight,
       waveformZoom,
       dualControl: dual,
+      deckHeights,
     });
-  }, [sessionReady, treeWidth, selectedNode, treeExpansion, sortState, infoOpen, subOpen, filterOpen, tree, screen, layout, subWidth, subTreeWidth, trafficLight, waveformZoom, dual]);
+  }, [sessionReady, treeWidth, selectedNode, treeExpansion, sortState, infoOpen, subOpen, filterOpen, tree, screen, layout, subWidth, subTreeWidth, trafficLight, waveformZoom, dual, deckHeights]);
 
   // The last screen, handed to the table until the backend answers. Dropped as
   // soon as the library is up, so a stale row cannot outlive its replacement —
@@ -2858,7 +2954,7 @@ function AppBody() {
     <PreferencesProvider value={prefs}>
     <MasterOutputConnection mode={viewPrefs.vuMeter} />
     <ConfirmHost />
-    <div className={styles.window} data-platform={platform.linux ? "linux" : platform.mac ? "mac" : "windows"}>
+    <div ref={windowRef} className={styles.window} data-platform={platform.linux ? "linux" : platform.mac ? "mac" : "windows"}>
       <div
         className={styles.titleBar}
         data-testid="title-bar"
@@ -2883,9 +2979,12 @@ function AppBody() {
       {/* Full Browser draws no deck at all, and no gutter under one. */}
       {deckCount(layout) > 0 ? (
         <div
+          ref={decksRef}
           className={styles.decks}
           data-mixer={deckCount(layout) > 1 ? "" : undefined}
           data-orientation={workspaceMode === "performance" ? performanceWaveform : "horizontal"}
+          data-sized={deckHeight === undefined ? undefined : ""}
+          style={deckHeight === undefined ? undefined : { ["--decks-h" as string]: `${deckHeight}px` }}
         >
           {/* One transport column for the pair, as rekordbox draws it: deck A
               down from the top, deck B up from the bottom, and the mixer strip
@@ -2999,7 +3098,25 @@ function AppBody() {
               <DualZoom onZoom={zoomBoth} />
             </div>
           ) : null}
-          <div className={styles.playerGutter} aria-hidden />
+          {arrangement === null ? (
+            <div className={styles.playerGutter} aria-hidden />
+          ) : (
+            <div
+              className={styles.playerGutter}
+              role="separator"
+              tabIndex={0}
+              aria-orientation="horizontal"
+              aria-label="Resize the decks"
+              aria-valuenow={deckHeight ?? deckFloor}
+              aria-valuemin={deckFloor}
+              title={tip("Drag to make the waveforms taller and the track list shorter. Double-click resets.")}
+              onPointerDown={onDeckSplitterDown}
+              onPointerMove={onDeckSplitterMove}
+              onPointerUp={onDeckSplitterUp}
+              onDoubleClick={resetDecks}
+              onKeyDown={onDeckSplitterKey}
+            />
+          )}
         </div>
       ) : null}
       <div
@@ -3262,6 +3379,7 @@ function AppBody() {
             setTreeWidth(clampWidth(305, bounds()));
             setSubWidth(DEFAULT_SUB_WIDTH);
             setSubTreeWidth(DEFAULT_SUB_TREE_WIDTH);
+            setDeckHeights({});
           }}
           onClose={() => setSettingsOpen(null)}
         />
@@ -3285,7 +3403,7 @@ function AppBody() {
       {/* The LINK strip: present from the moment a player or mixer is heard,
           and the whole LINK interface from then on. It draws nothing at all
           before that, so the row it sits in collapses. */}
-      <div className={styles.linkStrip}>
+      <div className={styles.linkStrip} ref={linkStripRef}>
         <LinkDeckStrip
           peers={linkPeers}
           link={link}

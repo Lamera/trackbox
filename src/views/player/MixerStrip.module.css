@@ -146,6 +146,10 @@
   width: 236px;
   min-height: 0;
   height: 100%;
+  /* Taller decks leave the mixer at its own height, pinned to the top, so the
+     crossfader and BEAT FX stay under the EQs. */
+  max-height: var(--s-player-dual-h);
+  align-self: start;
   overflow-y: auto;
   overflow-x: hidden;
   padding: 5px;

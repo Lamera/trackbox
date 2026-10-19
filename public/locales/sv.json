@@ -1759,5 +1759,8 @@
   "LOOP MOVE: a jump moves the loop.": "LOOP MOVE: a jump moves the loop.",
   "PADS": "PADS",
   "STEMS on the pads are planned for a later version.": "STEMS on the pads are planned for a later version.",
-  "Hot cue list": "Hot cue list"
+  "Hot cue list": "Hot cue list",
+  "--decks-h": "--decks-h",
+  "Drag to make the waveforms taller and the track list shorter. Double-click resets.": "Drag to make the waveforms taller and the track list shorter. Double-click resets.",
+  "Resize the decks": "Resize the decks"
 }

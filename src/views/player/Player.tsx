@@ -3182,7 +3182,7 @@ export const Player = memo(function Player({
           </div>
         ) : null}
       </div>
-      <aside className={styles.side} aria-label="Cue list">
+      <aside className={styles.side} aria-label="Cue list" data-panel={panel}>
         {panel === "info" ? (
           <DeckInfo track={track} details={details} />
         ) : panel === "pads" ? (
